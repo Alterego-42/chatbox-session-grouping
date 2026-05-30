@@ -53,6 +53,32 @@ All work sits on top of upstream `release 1.20.1` (`6e5ea630`). The branch holds
 
 ---
 
+### Local install (this machine)
+
+To replace the officially installed Chatbox at `C:\Users\Laptop\AppData\Local\Programs\Chatbox\` with the build from this branch — keeping the same shortcuts, uninstaller, and `xyz.chatboxapp.app` userData (real chats):
+
+1. Quit Chatbox completely (including the tray icon).
+2. Build:
+   ```bash
+   UPDATE_CHANNEL=latest pnpm exec electron-builder build --publish never
+   ```
+3. **Check root `package.json` was not corrupted** by electron-builder's `installAppDeps` (it sometimes rewrites it down to 17 lines):
+   ```bash
+   git diff package.json
+   git checkout HEAD -- package.json   # if it changed
+   ```
+4. Install into the system path:
+   ```bash
+   bash scripts/install-local.sh
+   ```
+5. Launch Chatbox from your usual shortcut. Version should read `0.0.1`.
+
+The build identity that matters lives in `release/app/package.json` (`productName: xyz.chatboxapp.app`, `version: 0.0.1`) — that file is what gets packed into ASAR and read by `app.getName()` / `app.getVersion()` at runtime.
+
+Rollback: `Chatbox.bak` next to the install dir holds the official build, and `app.asar.bak-*` next to the new asar are the last 3 versions of our own.
+
+---
+
 This is the repository for the Chatbox Community Edition, open-sourced under the GPLv3 license.
 
 [Chatbox is going open-source Again!](https://github.com/chatboxai/chatbox/issues/2266)
