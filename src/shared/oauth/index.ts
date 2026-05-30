@@ -11,6 +11,36 @@ export interface OAuthProviderInfo {
   flowType: 'callback' | 'code-paste' | 'device-code'
 }
 
+// Stubs for types only consumed when desktop OAuth features are enabled.
+// Keep these minimal — real shapes live in the non-OSS edition.
+export interface OAuthCredentials {
+  accessToken?: string
+  refreshToken?: string
+  expiresAt?: number
+}
+export interface OAuthResult {
+  success: boolean
+  error?: string
+  credentials?: OAuthCredentials
+}
+export interface OAuthStartResult {
+  success: boolean
+  error?: string
+}
+export interface DeviceFlowStartResult {
+  success: boolean
+  error?: string
+}
+export const OAuthIpcChannels = {
+  LOGIN: 'oauth:login',
+  START_LOGIN: 'oauth:start-login',
+  EXCHANGE_CODE: 'oauth:exchange-code',
+  START_DEVICE_FLOW: 'oauth:start-device-flow',
+  WAIT_DEVICE_TOKEN: 'oauth:wait-device-token',
+  REFRESH: 'oauth:refresh',
+  CANCEL: 'oauth:cancel',
+} as const
+
 export function mergeSharedOAuthProviderSettings(
   providerId: string,
   providers: Record<string, ProviderSettings> | undefined
