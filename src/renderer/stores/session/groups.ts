@@ -12,20 +12,11 @@ export async function moveSessionToGroup(
   targetGroupId: string | null,
   insertIndex?: number
 ): Promise<void> {
-  await chatStore.updateSessionList((sessions) => {
-    const list = sessions ?? []
-    return list.map((s) => {
-      if (s.id !== sessionId) {
-        return s
-      }
-      const next: SessionMeta = {
-        ...s,
-        groupId: targetGroupId === null ? undefined : targetGroupId,
-        sortIndex: insertIndex,
-      }
-      return next
-    })
-  })
+  await chatStore.updateSession(sessionId, (s) => ({
+    ...s,
+    groupId: targetGroupId === null ? undefined : targetGroupId,
+    sortIndex: insertIndex,
+  }))
 }
 
 export async function reorderWithinGroup(groupId: string | null, oldIndex: number, newIndex: number): Promise<void> {

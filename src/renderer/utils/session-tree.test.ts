@@ -107,4 +107,22 @@ describe('buildFlatTree', () => {
     expect(sessionIds.slice(0, 2)).toEqual(['s-idx-0', 's-idx-1'])
     expect(sessionIds.slice(2)).toEqual(['s-noidx-2', 's-noidx-1'])
   })
+
+  it('falls sessions referencing a missing group back to Unassigned (no silent drop)', () => {
+    const groups = [group({ id: 'group:1', sortIndex: 0 })]
+    const sessions = [
+      meta({ id: 'orphan', groupId: 'group:deleted' }),
+      meta({ id: 'in-known', groupId: 'group:1' }),
+      meta({ id: 'plain' }),
+    ]
+    const rows = buildFlatTree(groups, sessions, {})
+    const unassignedSessions = rows
+      .slice(rows.findIndex((r) => r.kind === 'unassigned-root'))
+      .filter((r) => r.kind === 'session')
+      .map((r) => r.id)
+    expect(unassignedSessions).toContain('orphan')
+    expect(unassignedSessions).toContain('plain')
+    const knownGroup = rows.find((r) => r.kind === 'group' && r.id === 'group:1')
+    expect(knownGroup).toMatchObject({ childCount: 1 })
+  })
 })

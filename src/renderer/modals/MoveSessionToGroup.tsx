@@ -31,7 +31,15 @@ const MoveSessionToGroup = NiceModal.create(({ sessionId }: Props) => {
   const [submitting, setSubmitting] = useState(false)
   const [query, setQuery] = useState('')
 
+  const resetState = () => {
+    setSubmitting(false)
+    setCreating(false)
+    setNewGroupName('')
+    setQuery('')
+  }
+
   const onClose = () => {
+    resetState()
     modal.resolve()
     modal.hide()
   }
@@ -50,6 +58,7 @@ const MoveSessionToGroup = NiceModal.create(({ sessionId }: Props) => {
     setSubmitting(true)
     try {
       await moveSessionToGroup(sessionId, targetGroupId)
+      resetState()
       modal.resolve(targetGroupId)
       modal.hide()
     } catch (error) {
@@ -66,6 +75,7 @@ const MoveSessionToGroup = NiceModal.create(({ sessionId }: Props) => {
     try {
       const group = await createGroup({ name })
       await moveSessionToGroup(sessionId, group.id)
+      resetState()
       modal.resolve(group.id)
       modal.hide()
     } catch (error) {

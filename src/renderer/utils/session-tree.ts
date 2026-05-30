@@ -33,10 +33,11 @@ export function buildFlatTree(
   expanded: Record<string, boolean>
 ): FlatRow[] {
   const visibleSessions = sessions.filter((s) => !isSystemSession(s) && !s.hidden)
+  const knownGroupIds = new Set(groups.map((g) => g.id))
   const sessionsByGroup = new Map<string, SessionMeta[]>()
   const unassigned: SessionMeta[] = []
   for (const s of visibleSessions) {
-    if (s.groupId) {
+    if (s.groupId && knownGroupIds.has(s.groupId)) {
       const arr = sessionsByGroup.get(s.groupId) ?? []
       arr.push(s)
       sessionsByGroup.set(s.groupId, arr)

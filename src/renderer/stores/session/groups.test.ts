@@ -40,8 +40,18 @@ const updateSessionListMock = vi.fn(async (updater: UpdaterFn<SessionMeta[]>) =>
   storageState.sessions = updater(storageState.sessions)
 })
 
+const updateSessionMock = vi.fn(
+  async (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
+    storageState.sessions = storageState.sessions.map((s) =>
+      s.id === sessionId ? ({ ...s, ...updater(s) } as SessionMeta) : s
+    )
+  }
+)
+
 vi.mock('../chatStore', () => ({
   updateSessionList: (updater: UpdaterFn<SessionMeta[]>) => updateSessionListMock(updater),
+  updateSession: (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) =>
+    updateSessionMock(sessionId, updater),
   listSessionsMeta: async () => storageState.sessions,
 }))
 
@@ -67,6 +77,14 @@ describe('session/groups', () => {
     updateSessionListMock.mockImplementation(async (updater: UpdaterFn<SessionMeta[]>) => {
       storageState.sessions = updater(storageState.sessions)
     })
+    updateSessionMock.mockClear()
+    updateSessionMock.mockImplementation(
+      async (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
+        storageState.sessions = storageState.sessions.map((s) =>
+          s.id === sessionId ? ({ ...s, ...updater(s) } as SessionMeta) : s
+        )
+      }
+    )
     updateGroupListMock.mockClear()
     updateGroupListMock.mockImplementation(async (updater: UpdaterFn<SessionGroup[]>) => {
       storageState.groups = updater(storageState.groups)
