@@ -282,6 +282,7 @@ export const SessionSchema = z.object({
   groupId: z.string().optional(),
   system: z.boolean().optional(),
   sortIndex: z.number().optional(),
+  summaryPrompt: z.string().optional(),
 })
 
 export const SessionMetaSchema = SessionSchema.pick({

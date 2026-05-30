@@ -332,6 +332,11 @@ export const SettingsSchema = GlobalSessionSettingsSchema.extend({
     .optional()
     .catch(undefined),
 
+  // Default summary prompt used by the per-session summary modal when a
+  // session does not specify its own. Empty / undefined means use the
+  // built-in default exported from src/renderer/stores/session/summary.ts.
+  defaultSessionSummaryPrompt: z.string().optional().catch(undefined),
+
   // chatboxai
   licenseKey: z.string().optional(),
   licenseInstances: z.record(z.string(), z.string()).optional().catch(undefined),

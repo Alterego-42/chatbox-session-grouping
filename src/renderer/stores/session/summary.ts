@@ -12,6 +12,29 @@ import { getMessageText } from '../../../shared/utils/message'
 import * as chatStore from '../chatStore'
 import { settingsStore } from '../settingsStore'
 
+// Built-in default prompt template for per-session summaries. Use the literal
+// `{{languageName}}` placeholder to interpolate the user's display language.
+// Resolution order at generation time:
+//   1. session.summaryPrompt (if non-empty)
+//   2. globalSettings.defaultSessionSummaryPrompt (if non-empty)
+//   3. this constant
+export const DEFAULT_SESSION_SUMMARY_PROMPT = `You write summaries of chat conversations for the user who participated in them. Respond in {{languageName}}.
+
+First, silently identify what kind of conversation this is — e.g. development task, Q&A learning, ideation/brainstorm, consultation, debugging, creative writing, role-play, casual chat, research, decision-making, or something else. Then tailor the summary to that type:
+- Task/output-oriented (dev, writing, analysis): lead with what was built, decided, or produced; list concrete outcomes.
+- Learning / Q&A: surface the key concepts explained and questions answered.
+- Brainstorm / creative: name the themes explored, ideas generated, and directions worth pursuing.
+- Consultation / debugging: state the problem, the diagnosis, and whether it was resolved.
+- Role-play / casual chat: a short narrative of key moments — no rigid structure.
+
+Choose the format that fits: 1–4 short paragraphs, a tight bulleted list, or a single line. Do not impose a fixed markdown skeleton. Aim for under ~150 words; keep it tight rather than truncating mid-thought.
+
+Hard rules:
+- Do NOT narrate the exchange ("the user asked", "the assistant replied", "then", "随后", "助手返回了" and equivalents in any language are forbidden).
+- Stay strictly grounded in the transcript — do not invent facts, links, numbers, names, or quotations.
+- No greetings, apologies, meta-commentary, or restating these instructions.
+- Do not announce the conversation type explicitly; just let the style reflect it.`
+
 export interface SessionSummary {
   content: string
   generatedAt: number
@@ -77,7 +100,8 @@ export async function generateSessionSummary(sessionId: string): Promise<Session
   const configs = await platform.getConfig()
   const dependencies = await createModelDependencies()
   const model = getModel(settings, globalSettings, configs, dependencies)
-  const prompts = promptFormat.summarizeForUser(budgetedMessages, languageNameMap[settings.language])
+  const resolvedPrompt = resolveSummaryPrompt(session.summaryPrompt, globalSettings.defaultSessionSummaryPrompt)
+  const prompts = promptFormat.summarizeForUser(budgetedMessages, languageNameMap[settings.language], resolvedPrompt)
   const result = await generateText(model, prompts)
   const content = (result.contentParts ?? [])
     .filter((c) => c.type === 'text')
@@ -99,6 +123,16 @@ export async function generateSessionSummary(sessionId: string): Promise<Session
   const key = StorageKeyGenerator.summary(sessionId)
   await storage.setItemNow(key, summary)
   return summary
+}
+
+function resolveSummaryPrompt(sessionPrompt: string | undefined, globalPrompt: string | undefined): string {
+  if (sessionPrompt && sessionPrompt.trim().length > 0) {
+    return sessionPrompt
+  }
+  if (globalPrompt && globalPrompt.trim().length > 0) {
+    return globalPrompt
+  }
+  return DEFAULT_SESSION_SUMMARY_PROMPT
 }
 
 function selectMessagesWithinBudget(messages: Message[], modelId: string): Message[] {

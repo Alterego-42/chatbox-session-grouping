@@ -163,7 +163,7 @@ Write in ${language}. Be concise but complete. Do NOT include prefaces or meta-c
   return [...msgs, instructionMessage]
 }
 
-export function summarizeForUser(msgs: Message[], languageName: string): Message[] {
+export function summarizeForUser(msgs: Message[], languageName: string, systemPromptTemplate?: string): Message[] {
   const transcript = msgs
     .map((m) => {
       const text = getMessageText(m, false, false)
@@ -172,15 +172,9 @@ export function summarizeForUser(msgs: Message[], languageName: string): Message
     })
     .join('\n\n---------\n\n')
 
-  const systemText = `You produce concise, faithful summaries of chat conversations for the user who participated in them.
-
-Output rules:
-- Write in ${languageName}.
-- Output 3-6 markdown bullets starting with "- ".
-- After the bullets, append exactly one final line: "TL;DR: <one-sentence wrap-up>".
-- Stay strictly grounded in the provided transcript. Do not invent facts, links, numbers, names, or quotations that are not in the transcript.
-- Do not include meta-commentary about being an AI or about the summarization process.
-- Do not greet, apologize, or restate these instructions.`
+  const template =
+    systemPromptTemplate && systemPromptTemplate.trim().length > 0 ? systemPromptTemplate : DEFAULT_SUMMARY_FOR_USER_PROMPT
+  const systemText = template.replace(/\{\{\s*languageName\s*\}\}/g, languageName)
 
   const userText = `Summarize the following conversation between User and Assistant.
 
@@ -201,3 +195,21 @@ ${transcript}
     },
   ]
 }
+
+export const DEFAULT_SUMMARY_FOR_USER_PROMPT = `You write outcome-oriented summaries of chat conversations for the user who participated in them.
+
+Respond in {{languageName}} using markdown with this exact structure:
+
+**Topic:** <one sentence describing what the conversation was about>
+
+**Key outcomes:**
+- <a deliverable, decision, solved problem, or insight>
+- <3-6 bullets total, each a concrete outcome — not a play-by-play>
+
+**Open questions / next steps:** <only include this section if the conversation ends unresolved; otherwise omit it entirely>
+
+Hard rules:
+- Focus on what was produced, decided, or learned. Do NOT narrate the exchange ("the user asked", "the assistant replied", "then", "随后", "助手返回了" and equivalents in any language are forbidden).
+- No TL;DR line — the Topic line replaces it.
+- Stay strictly grounded in the transcript: do not invent facts, links, numbers, names, or quotations.
+- No greetings, apologies, meta-commentary, or restating these instructions.`
