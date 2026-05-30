@@ -1,4 +1,4 @@
-import { DebouncedFunc } from 'lodash'
+import type { DebouncedFunc } from 'lodash'
 import debounce from 'lodash/debounce'
 import { v4 as uuidv4 } from 'uuid'
 import BaseStorage from './BaseStorage'
@@ -14,11 +14,15 @@ export enum StorageKey {
   ChatSessionSettings = 'chat-session-settings',
   PictureSessionSettings = 'picture-session-settings',
   AuthInfo = 'authInfo',
+  SessionGroupsList = 'session-groups-list',
 }
 
 export const StorageKeyGenerator = {
   session(id: string) {
     return `session:${id}`
+  },
+  summary(sessionId: string) {
+    return `summary:${sessionId}`
   },
   picture(category: string) {
     return `picture:${category}:${uuidv4()}`
@@ -39,7 +43,7 @@ export default class StoreStorage extends BaseStorage {
     super()
   }
   public async getItem<T>(key: string, initialValue: T): Promise<T> {
-    let value: T = await super.getItem(key, initialValue)
+    const value: T = await super.getItem(key, initialValue)
 
     if (key === StorageKey.Configs && value === initialValue) {
       await super.setItemNow(key, initialValue) // 持久化初始生成的 uuid

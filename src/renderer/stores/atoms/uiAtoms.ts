@@ -32,3 +32,6 @@ export const inputBoxPreConstructedMessageFamily = atomFamily((_sessionId: strin
 
 // Atom to store collapsed state of providers
 export const collapsedProvidersAtom = atomWithStorage<Record<string, boolean>>('collapsedProviders', {})
+
+// key: group.id 或 '__unassigned__'；value 为 false 表示折叠；未设置/true 表示展开
+export const expandedGroupsAtom = atomWithStorage<Record<string, boolean>>('expandedGroups', {})

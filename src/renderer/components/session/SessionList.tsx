@@ -18,14 +18,19 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import NiceModal from '@ebay/nice-modal-react'
 import { ActionIcon, Flex, Text, Tooltip } from '@mantine/core'
-import { IconArchive, IconSearch } from '@tabler/icons-react'
+import { IconArchive, IconFolderPlus, IconSearch } from '@tabler/icons-react'
 import { useRouterState } from '@tanstack/react-router'
-import type { MutableRefObject } from 'react'
+import { useAtom } from 'jotai'
+import { type MutableRefObject, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Virtuoso } from 'react-virtuoso'
+import { expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
 import { useSessionList } from '@/stores/chatStore'
-import { reorderSessions } from '@/stores/sessionActions'
+import { createGroup, useGroups } from '@/stores/groupStore'
+import { moveSessionToGroup, reorderWithinGroup } from '@/stores/sessionActions'
 import { useUIStore } from '@/stores/uiStore'
+import { buildFlatTree, type FlatRow } from '@/utils/session-tree'
+import GroupNode from './GroupNode'
 import SessionItem from './SessionItem'
 
 export interface Props {
@@ -35,6 +40,8 @@ export interface Props {
 export default function SessionList(props: Props) {
   const { t } = useTranslation()
   const { sessionMetaList: sortedSessions, refetch } = useSessionList()
+  const { groups } = useGroups()
+  const [expanded, setExpanded] = useAtom(expandedGroupsAtom)
   const setOpenSearchDialog = useUIStore((s) => s.setOpenSearchDialog)
   const sensors = useSensors(
     useSensor(TouchSensor, {
@@ -52,6 +59,21 @@ export default function SessionList(props: Props) {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   )
+
+  const rows: FlatRow[] = useMemo(
+    () => buildFlatTree(groups ?? [], sortedSessions ?? [], expanded),
+    [groups, sortedSessions, expanded]
+  )
+
+  const sortableIds = useMemo(
+    () => rows.filter((r): r is Extract<FlatRow, { kind: 'session' }> => r.kind === 'session').map((r) => r.id),
+    [rows]
+  )
+
+  const toggleExpand = (key: string) => {
+    setExpanded((m) => ({ ...m, [key]: m[key] === false }))
+  }
+
   const onDragEnd = async (event: DragEndEvent) => {
     if (!event.over) {
       return
@@ -59,14 +81,43 @@ export default function SessionList(props: Props) {
     if (!sortedSessions) {
       return
     }
-    const activeId = event.active.id
-    const overId = event.over.id
-    if (activeId !== overId) {
-      const oldIndex = sortedSessions.findIndex((s) => s.id === activeId)
-      const newIndex = sortedSessions.findIndex((s) => s.id === overId)
-      await reorderSessions(oldIndex, newIndex)
-      refetch()
+    const activeId = String(event.active.id)
+    const overId = String(event.over.id)
+    if (activeId === overId) {
+      return
     }
+    const activeRow = rows.find(
+      (r): r is Extract<FlatRow, { kind: 'session' }> => r.kind === 'session' && r.id === activeId
+    )
+    const overRow = rows.find(
+      (r): r is Extract<FlatRow, { kind: 'session' }> => r.kind === 'session' && r.id === overId
+    )
+    if (!activeRow || !overRow) {
+      return
+    }
+    const targetGroupId = overRow.groupId
+    const sessionsInTargetGroup = rows.filter(
+      (r): r is Extract<FlatRow, { kind: 'session' }> => r.kind === 'session' && r.groupId === targetGroupId
+    )
+    const overIdxInGroup = sessionsInTargetGroup.findIndex((s) => s.id === overId)
+    if (activeRow.groupId === targetGroupId) {
+      const activeIdxInGroup = sessionsInTargetGroup.findIndex((s) => s.id === activeId)
+      if (activeIdxInGroup < 0 || overIdxInGroup < 0) {
+        return
+      }
+      await reorderWithinGroup(targetGroupId, activeIdxInGroup, overIdxInGroup)
+    } else {
+      await moveSessionToGroup(activeId, targetGroupId, overIdxInGroup)
+    }
+    refetch()
+  }
+
+  const handleCreateGroup = async () => {
+    const name = window.prompt(String(t('New group name')), String(t('New group')))
+    if (!name || !name.trim()) {
+      return
+    }
+    await createGroup({ name: name.trim() })
   }
   const routerState = useRouterState()
 
@@ -76,6 +127,17 @@ export default function SessionList(props: Props) {
         <Text c="chatbox-tertiary" flex={1}>
           {t('Chat')}
         </Text>
+
+        <Tooltip label={t('New group')} openDelay={1000} withArrow>
+          <ActionIcon
+            variant="subtle"
+            color="chatbox-tertiary"
+            size={20}
+            onClick={() => void handleCreateGroup()}
+          >
+            <IconFolderPlus />
+          </ActionIcon>
+        </Tooltip>
 
         <Tooltip label={t('Search')} openDelay={1000} withArrow>
           <ActionIcon
@@ -107,23 +169,31 @@ export default function SessionList(props: Props) {
         onDragEnd={onDragEnd}
       >
         {sortedSessions && (
-          <SortableContext items={sortedSessions} strategy={verticalListSortingStrategy}>
+          <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
             <Virtuoso
               style={{ flex: 1 }}
-              data={sortedSessions}
+              data={rows}
+              computeItemKey={(_i, row) => row.id}
               scrollerRef={(ref) => {
                 if (ref instanceof HTMLDivElement) {
                   props.sessionListViewportRef.current = ref
                 }
               }}
-              itemContent={(_index, session) => (
-                <SortableItem id={session.id}>
-                  <SessionItem
-                    selected={routerState.location.pathname === `/session/${session.id}`}
-                    session={session}
-                  />
-                </SortableItem>
-              )}
+              itemContent={(_index, row) => {
+                if (row.kind === 'group' || row.kind === 'unassigned-root') {
+                  return <GroupNode row={row} onToggle={() => toggleExpand(row.id)} />
+                }
+                return (
+                  <div style={{ paddingLeft: row.depth * 12 }}>
+                    <SortableItem id={row.id}>
+                      <SessionItem
+                        selected={routerState.location.pathname === `/session/${row.session.id}`}
+                        session={row.session}
+                      />
+                    </SortableItem>
+                  </div>
+                )
+              }}
             />
           </SortableContext>
         )}

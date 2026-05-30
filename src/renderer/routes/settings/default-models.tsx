@@ -99,6 +99,41 @@ export function RouteComponent() {
       </Stack>
 
       <Stack gap="xs">
+        <Text fw={600}>{t('Default Summary Model')}</Text>
+
+        <ModelSelector
+          position="bottom-start"
+          width={320}
+          showAuto={true}
+          autoText={t('Auto (Use Chat Model)')!}
+          selectedProviderId={settings.defaultSummaryModel?.provider}
+          selectedModelId={settings.defaultSummaryModel?.model}
+          searchPosition="top"
+          onSelect={(provider, model) =>
+            setSettings({
+              defaultSummaryModel:
+                provider && model
+                  ? {
+                      provider,
+                      model,
+                    }
+                  : undefined,
+            })
+          }
+        >
+          <ModelSelectContent
+            autoText={t('Auto (Use Chat Model)')!}
+            provider={settings.defaultSummaryModel?.provider}
+            model={settings.defaultSummaryModel?.model}
+          />
+        </ModelSelector>
+
+        <Text c="chatbox-tertiary" size="xs">
+          {t('Chatbox will use this model to generate session summaries.')}
+        </Text>
+      </Stack>
+
+      <Stack gap="xs">
         <Text fw={600}>{t('Search Term Construction Model')}</Text>
 
         <ModelSelector

@@ -1,7 +1,7 @@
 import NiceModal from '@ebay/nice-modal-react'
 import { ActionIcon, Flex, Text } from '@mantine/core'
 import type { SessionMeta } from '@shared/types'
-import { IconCopy, IconDots, IconEdit, IconStar, IconStarFilled, IconTrash } from '@tabler/icons-react'
+import { IconCopy, IconDots, IconEdit, IconFileDescription, IconFolderSymlink, IconStar, IconStarFilled, IconTrash } from '@tabler/icons-react'
 import clsx from 'clsx'
 import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -47,6 +47,20 @@ function SessionItem(props: Props) {
           await NiceModal.show('session-settings', {
             session: await getSession(session.id),
           })
+        },
+      },
+      {
+        text: t('Move to group…'),
+        icon: IconFolderSymlink,
+        onClick: () => {
+          void NiceModal.show('move-session-to-group', { sessionId: session.id })
+        },
+      },
+      {
+        text: t('View Summary'),
+        icon: IconFileDescription,
+        onClick: () => {
+          void NiceModal.show('session-summary', { sessionId: session.id })
         },
       },
       {

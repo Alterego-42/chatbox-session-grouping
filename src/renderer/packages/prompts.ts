@@ -162,3 +162,42 @@ Write in ${language}. Be concise but complete. Do NOT include prefaces or meta-c
 
   return [...msgs, instructionMessage]
 }
+
+export function summarizeForUser(msgs: Message[], languageName: string): Message[] {
+  const transcript = msgs
+    .map((m) => {
+      const text = getMessageText(m, false, false)
+      const role = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : m.role
+      return `[${role}]\n${text}`
+    })
+    .join('\n\n---------\n\n')
+
+  const systemText = `You produce concise, faithful summaries of chat conversations for the user who participated in them.
+
+Output rules:
+- Write in ${languageName}.
+- Output 3-6 markdown bullets starting with "- ".
+- After the bullets, append exactly one final line: "TL;DR: <one-sentence wrap-up>".
+- Stay strictly grounded in the provided transcript. Do not invent facts, links, numbers, names, or quotations that are not in the transcript.
+- Do not include meta-commentary about being an AI or about the summarization process.
+- Do not greet, apologize, or restate these instructions.`
+
+  const userText = `Summarize the following conversation between User and Assistant.
+
+\`\`\`
+${transcript}
+\`\`\``
+
+  return [
+    {
+      id: `summary-system-${Date.now()}`,
+      role: 'system',
+      contentParts: [{ type: 'text', text: systemText }],
+    },
+    {
+      id: `summary-user-${Date.now()}`,
+      role: 'user',
+      contentParts: [{ type: 'text', text: userText }],
+    },
+  ]
+}

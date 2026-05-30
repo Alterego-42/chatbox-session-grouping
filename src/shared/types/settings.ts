@@ -310,6 +310,13 @@ export const SettingsSchema = GlobalSessionSettingsSchema.extend({
     })
     .optional()
     .catch(undefined),
+  defaultSummaryModel: z
+    .object({
+      provider: z.string(),
+      model: z.string(),
+    })
+    .optional()
+    .catch(undefined),
   searchTermConstructionModel: z
     .object({
       provider: z.string(),

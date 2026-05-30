@@ -1,0 +1,110 @@
+import { SESSION_MANAGER_ID } from '@shared/defaults'
+import type { SessionGroup, SessionMeta } from '@shared/types'
+import { describe, expect, it } from 'vitest'
+import { buildFlatTree } from './session-tree'
+
+const meta = (overrides: Partial<SessionMeta> & { system?: boolean } = {}): SessionMeta =>
+  ({
+    id: overrides.id ?? 'sess',
+    name: overrides.name ?? 'sess',
+    ...overrides,
+  }) as SessionMeta
+
+const group = (overrides: Partial<SessionGroup> & { id: string }): SessionGroup => ({
+  name: overrides.name ?? `g-${overrides.id}`,
+  parentId: overrides.parentId ?? null,
+  sortIndex: overrides.sortIndex ?? 0,
+  createdAt: overrides.createdAt ?? 0,
+  updatedAt: overrides.updatedAt ?? 0,
+  ...overrides,
+})
+
+describe('buildFlatTree', () => {
+  it('emits only unassigned-root + sessions when no groups exist', () => {
+    const sessions = [meta({ id: 'a' }), meta({ id: 'b' }), meta({ id: 'c' })]
+    const rows = buildFlatTree([], sessions, {})
+
+    expect(rows).toHaveLength(4)
+    expect(rows[0]).toMatchObject({ kind: 'unassigned-root', id: '__unassigned__', depth: 0, childCount: 3 })
+    expect(rows.slice(1).map((r) => ({ kind: r.kind, id: r.id, depth: r.depth }))).toEqual([
+      // sortSessions reverses normal sessions: c, b, a
+      { kind: 'session', id: 'c', depth: 1 },
+      { kind: 'session', id: 'b', depth: 1 },
+      { kind: 'session', id: 'a', depth: 1 },
+    ])
+  })
+
+  it('renders groups before unassigned-root, with correct depth', () => {
+    const groups = [group({ id: 'group:1', sortIndex: 0 }), group({ id: 'group:2', sortIndex: 1 })]
+    const sessions = [
+      meta({ id: 's1', groupId: 'group:1' }),
+      meta({ id: 's2', groupId: 'group:1' }),
+      meta({ id: 's3', groupId: 'group:2' }),
+      meta({ id: 's4', groupId: 'group:2' }),
+      meta({ id: 's5' }),
+    ]
+    const rows = buildFlatTree(groups, sessions, {})
+
+    const summary = rows.map((r) => ({ kind: r.kind, id: r.id, depth: r.depth }))
+    // group:1, its 2 sessions, group:2, its 2 sessions, unassigned-root, 1 session
+    expect(summary).toEqual([
+      { kind: 'group', id: 'group:1', depth: 0 },
+      { kind: 'session', id: 's2', depth: 1 },
+      { kind: 'session', id: 's1', depth: 1 },
+      { kind: 'group', id: 'group:2', depth: 0 },
+      { kind: 'session', id: 's4', depth: 1 },
+      { kind: 'session', id: 's3', depth: 1 },
+      { kind: 'unassigned-root', id: '__unassigned__', depth: 0 },
+      { kind: 'session', id: 's5', depth: 1 },
+    ])
+  })
+
+  it('omits children when group is collapsed', () => {
+    const groups = [group({ id: 'group:1', sortIndex: 0 })]
+    const sessions = [meta({ id: 's1', groupId: 'group:1' }), meta({ id: 's2', groupId: 'group:1' })]
+    const rows = buildFlatTree(groups, sessions, { 'group:1': false })
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ kind: 'group', id: 'group:1', expanded: false, childCount: 2 })
+    expect(rows[1]).toMatchObject({ kind: 'unassigned-root' })
+  })
+
+  it('filters out system sessions completely', () => {
+    const groups = [group({ id: 'group:1', sortIndex: 0 })]
+    const sessions = [
+      meta({ id: SESSION_MANAGER_ID, name: 'manager' }),
+      meta({ id: 'flagged', system: true }),
+      meta({ id: 'flagged-in-group', system: true, groupId: 'group:1' }),
+      meta({ id: 'normal' }),
+    ]
+    const rows = buildFlatTree(groups, sessions, {})
+
+    const sessionIds = rows.filter((r) => r.kind === 'session').map((r) => r.id)
+    expect(sessionIds).toEqual(['normal'])
+    // group should still appear, but with childCount=0 since the only candidate was system-flagged
+    const groupRow = rows.find((r) => r.kind === 'group')
+    expect(groupRow).toMatchObject({ kind: 'group', id: 'group:1', childCount: 0 })
+  })
+
+  it('orders groups by sortIndex even when input array is reversed', () => {
+    const groups = [group({ id: 'group:b', sortIndex: 1 }), group({ id: 'group:a', sortIndex: 0 })]
+    const rows = buildFlatTree(groups, [], {})
+    const groupIds = rows.filter((r) => r.kind === 'group').map((r) => r.id)
+    expect(groupIds).toEqual(['group:a', 'group:b'])
+  })
+
+  it('uses group sortIndex on sessions when present, then falls back to sortSessions', () => {
+    const groups = [group({ id: 'group:1', sortIndex: 0 })]
+    const sessions = [
+      meta({ id: 's-noidx-1', groupId: 'group:1' }),
+      meta({ id: 's-idx-1', groupId: 'group:1', sortIndex: 1 }),
+      meta({ id: 's-idx-0', groupId: 'group:1', sortIndex: 0 }),
+      meta({ id: 's-noidx-2', groupId: 'group:1' }),
+    ]
+    const rows = buildFlatTree(groups, sessions, {})
+    const sessionIds = rows.filter((r) => r.kind === 'session').map((r) => r.id)
+    // sorted by sortIndex first; the others come after via sortSessions (reverse-chronological)
+    expect(sessionIds.slice(0, 2)).toEqual(['s-idx-0', 's-idx-1'])
+    expect(sessionIds.slice(2)).toEqual(['s-noidx-2', 's-noidx-1'])
+  })
+})

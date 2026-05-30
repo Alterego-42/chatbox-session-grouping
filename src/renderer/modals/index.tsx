@@ -10,8 +10,10 @@ import FileParseError from './FileParseError'
 import JsonViewer from './JsonViewer'
 import MessageEdit from './MessageEdit'
 import ModelEdit from './ModelEdit'
+import MoveSessionToGroup from './MoveSessionToGroup'
 import ReportContent from './ReportContent'
 import SessionSettings from './SessionSettings'
+import SessionSummary from './SessionSummary'
 import ThreadNameEdit from './ThreadNameEdit'
 import Welcome from './Welcome'
 import CopilotSettingsModal from '../routes/copilots/-components/CopilotSettingsModal'
@@ -32,3 +34,5 @@ NiceModal.register('model-edit', ModelEdit)
 NiceModal.register('thread-name-edit', ThreadNameEdit)
 NiceModal.register('edgeone-deploy-success', EdgeOneDeploySuccess)
 NiceModal.register('copilot-settings', CopilotSettingsModal)
+NiceModal.register('move-session-to-group', MoveSessionToGroup)
+NiceModal.register('session-summary', SessionSummary)

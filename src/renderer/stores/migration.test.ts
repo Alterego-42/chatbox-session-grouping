@@ -417,8 +417,8 @@ describe('migrateStorage test', () => {
     const migration = await import('./migration')
     await migration._migrateStorageForTest()
 
-    // Should set current version (13) to IPC file storage (Desktop platform)
-    expect(ipcFileData[StorageKey.ConfigVersion]).toBe(JSON.stringify(13))
+    // Should set current version to IPC file storage (Desktop platform)
+    expect(ipcFileData[StorageKey.ConfigVersion]).toBe(JSON.stringify(migration.CurrentVersion))
     expect(initData).toHaveBeenCalled()
   })
 
@@ -868,5 +868,89 @@ describe('migrateStorage test', () => {
     expect(localforageData['session:old-session']).toBeUndefined()
 
     expect(initData).not.toHaveBeenCalled()
+  })
+})
+
+describe('migrate_14_to_15', () => {
+  type MigrateStore = {
+    getData: <T>(key: string, defaultValue: T) => Promise<T>
+    setData: <T>(key: string, value: T) => Promise<void>
+    setAll: (data: Record<string, unknown>) => Promise<void>
+  }
+
+  function makeMockStore(initial: Record<string, unknown> = {}): {
+    store: MigrateStore
+    data: Record<string, unknown>
+  } {
+    const data: Record<string, unknown> = { ...initial }
+    const store: MigrateStore = {
+      getData: async <T>(k: string, def: T) => (k in data ? (data[k] as T) : def),
+      setData: async <T>(k: string, v: T) => {
+        data[k] = v
+      },
+      setAll: async (d) => {
+        Object.assign(data, d)
+      },
+    }
+    return { store, data }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('initializes session-groups-list to [] and bumps configVersion to 15', async () => {
+    const { store, data } = makeMockStore({ configVersion: 14 })
+    const migration = await import('./migration')
+    await migration.migrateOnData(store, false)
+
+    expect(data['session-groups-list']).toEqual([])
+    expect(data.configVersion).toBe(15)
+  })
+
+  it('is idempotent: preserves existing non-empty session-groups-list when re-run', async () => {
+    const existing = [{ id: 'group:x', name: 'A', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 }]
+    const { store, data } = makeMockStore({
+      configVersion: 14,
+      'session-groups-list': existing,
+    })
+    const migration = await import('./migration')
+    await migration.migrateOnData(store, false)
+
+    expect(data['session-groups-list']).toEqual(existing)
+    expect(data.configVersion).toBe(15)
+
+    // Re-run the 14→15 step; user data must not be overwritten
+    data.configVersion = 14
+    await migration.migrateOnData(store, false)
+
+    expect(data['session-groups-list']).toEqual(existing)
+    expect(data.configVersion).toBe(15)
+  })
+
+  it('chains from configVersion 12 up to 15 and ends with session-groups-list = []', async () => {
+    const { store, data } = makeMockStore({
+      configVersion: 12,
+      'chat-sessions-list': [], // keeps migrate_13_to_14 as a no-op
+    })
+    const migration = await import('./migration')
+    await migration.migrateOnData(store, false)
+
+    expect(data.configVersion).toBe(15)
+    expect(data['session-groups-list']).toEqual([])
+  })
+
+  it('does not rewrite sessions that lack a groupId field', async () => {
+    const oldSession = { id: 's1', name: 'old', messages: [] }
+    const { store, data } = makeMockStore({
+      configVersion: 14,
+      'session:s1': oldSession,
+    })
+    const migration = await import('./migration')
+    await migration.migrateOnData(store, false)
+
+    expect(data['session:s1']).toEqual(oldSession)
+    expect(data['session-groups-list']).toEqual([])
+    expect(data.configVersion).toBe(15)
   })
 })
