@@ -13,11 +13,14 @@ export async function moveSessionToGroup(
   targetGroupId: string | null,
   insertIndex?: number
 ): Promise<void> {
-  await chatStore.updateSession(sessionId, (s) => ({
-    ...s,
-    groupId: targetGroupId === null ? undefined : targetGroupId,
-    sortIndex: insertIndex,
-  }))
+  await chatStore.updateSession(sessionId, (s) => {
+    if (!s) throw new Error(`moveSessionToGroup: session "${sessionId}" not found`)
+    return {
+      ...s,
+      groupId: targetGroupId === null ? undefined : targetGroupId,
+      sortIndex: insertIndex,
+    }
+  })
 }
 
 export async function reorderWithinGroup(groupId: string | null, oldIndex: number, newIndex: number): Promise<void> {

@@ -52,7 +52,7 @@ vi.mock('./chatStore', () => ({
 
 async function importFresh() {
   vi.resetModules()
-  return await import('./groupStore')
+  return await import('./groupStore.js')
 }
 
 describe('groupStore', () => {

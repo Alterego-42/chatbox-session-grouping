@@ -100,7 +100,7 @@ vi.mock('./crud', () => ({
 
 async function importFresh() {
   vi.resetModules()
-  return await import('./groups')
+  return await import('./groups.js')
 }
 
 describe('session/groups', () => {

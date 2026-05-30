@@ -901,7 +901,7 @@ describe('migrate_14_to_15', () => {
 
   it('initializes session-groups-list to [] and bumps configVersion to 15', async () => {
     const { store, data } = makeMockStore({ configVersion: 14 })
-    const migration = await import('./migration')
+    const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
     expect(data['session-groups-list']).toEqual([])
@@ -914,7 +914,7 @@ describe('migrate_14_to_15', () => {
       configVersion: 14,
       'session-groups-list': existing,
     })
-    const migration = await import('./migration')
+    const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
     expect(data['session-groups-list']).toEqual(existing)
@@ -933,7 +933,7 @@ describe('migrate_14_to_15', () => {
       configVersion: 12,
       'chat-sessions-list': [], // keeps migrate_13_to_14 as a no-op
     })
-    const migration = await import('./migration')
+    const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
     expect(data.configVersion).toBe(15)
@@ -946,7 +946,7 @@ describe('migrate_14_to_15', () => {
       configVersion: 14,
       'session:s1': oldSession,
     })
-    const migration = await import('./migration')
+    const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
     expect(data['session:s1']).toEqual(oldSession)
