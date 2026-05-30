@@ -3,6 +3,56 @@
   <a href="./doc/README-CN.md">简体中文</a>
 </p>
 
+> **Personal fork** — this branch (`Alterego-42/chatbox-session-grouping`) extends Chatbox CE with sidebar session grouping, selective export / import, and an AI assistant that can reorganize the sidebar via tool calls. It is built for personal use only; no upstream PR is planned.
+
+## What this fork adds on top of upstream
+
+All work sits on top of upstream `release 1.20.1` (`6e5ea630`). The branch holds **17 commits** spanning seven feature themes, with no regressions to the inherited `tsc` baseline.
+
+### Sidebar session groups
+- One-level group nesting (root → children) — deeper nesting is intentionally rejected at the schema layer to keep v1 design tight.
+- Per-group color (Mantine `ColorInput` with preset swatches) — clearing returns to the theme default.
+- Group duplication that clones every session inside, including direct child subgroups.
+- Drag-and-drop powered by `dnd-kit` with a single flattened `SortableContext`. UX details:
+  - DragOverlay with explicit before/after/inside drop indicators (no more swap-then-snap-back).
+  - Right-edge "unnest zone" — drag toward the right edge to un-nest a child group or move a grouped session to **Unassigned**, working under `restrictToVerticalAxis`.
+  - Inside-drop on a group's own parent reorders the active group to the front (recovers the otherwise-narrow first slot).
+- Group-node action menu: rename / set color / duplicate / delete (delete uses double-check to prevent accidental data loss).
+- New "Unassigned" bucket for sessions without a group — visible as a virtual root.
+
+### Selective export / import
+- Dual-layer checkbox tree (groups + sessions) with `indeterminate` state, virtual `__unassigned__` id, and group-aware import that merges `session-groups-list` with `uniqBy(... 'id')`.
+- Old `1.20.x` export files (no `session-groups-list` key) import gracefully.
+- Fixes a pre-existing bug where `SessionGroupsList` was silently absent from the export whitelist.
+
+### AI Manager session (pinned at sidebar bottom-left)
+- Reserved system session `__chatbox_session_manager__`, persisted, idempotently created on bootstrap, and never showing up in the sortable list.
+- 23 model-callable tools, exposed only inside this special session via `stream-text.ts`:
+  - **Single-target**: `list_sessions / list_groups / move_session / rename_session / duplicate_session / delete_session / create_group / rename_group / reorder_group / duplicate_group / set_group_color / set_group_parent / delete_group`.
+  - **Batch**: `bulk_move / bulk_rename_sessions / bulk_delete_sessions / bulk_update_groups / bulk_create_groups` — single confirmation per batch, with the assistant prompted to prefer batches over per-item loops.
+  - **Content read**: `get_session_summary / bulk_get_summaries / get_session_messages` — read cached summaries, regenerate on demand, or fall back to last-N message text with per-message char limits.
+  - **Auto-organize hook**: `auto_organize` (currently a no-op `OrganizeStrategy`) + `apply_organize_proposal` — interface ready, LLM strategy not yet wired.
+- All destructive actions go through a `ConfirmDangerousAction` Nice Modal that returns `Promise<boolean>` with a 1-second initial Confirm-button disable.
+
+### Adaptive session summaries
+- Default summary prompt now classifies the conversation type (development task / Q&A / brainstorm / role-play / consultation / casual chat) before summarizing, instead of forcing every session through the same template.
+- Resolution chain at generation time: `session.summaryPrompt` → `globalSettings.defaultSessionSummaryPrompt` → built-in default. Both per-session and global overrides are editable in their respective settings panes.
+
+### OpenAI Responses API tool-use fix
+- Force `store: false` for the API-key path (already true for OAuth) so multi-turn tool calls work. Without this, OpenAI returns `function_call_output requires item_reference ids matching each call_id` because we don't track `previous_response_id` and `ai-sdk` drops the `itemId` needed for `item_reference`. No token-cost impact — prompt caching is independent of `store`.
+
+### Local dev unblockers
+- `electron.vite.config.ts` `optimizeDeps` extension to dodge the MUI v5 + Vite 7 + pnpm-hoisted `createTheme_default is not a function` crash on first render.
+- `engine-strict=false` in `.npmrc` so Node 24 doesn't refuse to run the upstream `engines.node "<23"` constraint.
+- Three minimal stubs (`shared/oauth/index.ts`, `shared/providers/definitions/github-copilot.ts`, `renderer/packages/translation.ts`) for upstream-incomplete imports.
+- `getAllStoreKeys` IPC handler added in `src/main/main.ts` — without it, the export feature silently produced 184-byte JSON files containing only metadata.
+
+### Tests
+- 50+ new vitest cases covering `routeDragEnd`, `buildFlatTree`, group store guards, `duplicateGroup`, and selective export helpers.
+- `tsc --noEmit`: holds steady at the upstream-inherited baseline (224 errors), with **zero** added by this branch.
+
+---
+
 This is the repository for the Chatbox Community Edition, open-sourced under the GPLv3 license.
 
 [Chatbox is going open-source Again!](https://github.com/chatboxai/chatbox/issues/2266)
