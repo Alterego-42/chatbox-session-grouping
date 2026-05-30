@@ -5,7 +5,6 @@ export type DragEndAction =
   | { kind: 'reorder-within-group'; groupId: string | null; oldIndex: number; newIndex: number }
   | { kind: 'move-session-to-group'; sessionId: string; targetGroupId: string | null; insertIndex: number | undefined }
   | { kind: 'reorder-groups'; oldIndex: number; newIndex: number }
-  // Reserved for future nested-groups support; never returned today.
   | { kind: 'reparent-group'; groupId: string; newParentId: string | null; insertIndex: number | undefined }
 
 export type DropPosition = 'before' | 'after' | 'inside'
@@ -47,17 +46,61 @@ export function routeDragEnd({ active, over, overPosition = 'after', sessions, g
   const overType = over.data?.current?.type
 
   if (activeType === 'group' && overType === 'group') {
-    const sorted = [...groups].sort((a, b) => a.sortIndex - b.sortIndex)
-    const oldIndex = sorted.findIndex((g) => g.id === activeId)
-    const overIndex = sorted.findIndex((g) => g.id === overId)
-    if (oldIndex < 0 || overIndex < 0) return { kind: 'noop' }
-    let newIndex = overPosition === 'before' ? overIndex : overIndex + 1
-    // Compensate for the active row leaving its original slot before insertion.
-    if (oldIndex < newIndex) newIndex -= 1
-    if (newIndex < 0) newIndex = 0
-    if (newIndex > sorted.length - 1) newIndex = sorted.length - 1
-    if (oldIndex === newIndex) return { kind: 'noop' }
-    return { kind: 'reorder-groups', oldIndex, newIndex }
+    const activeGroup = groups.find((g) => g.id === activeId)
+    const overGroup = groups.find((g) => g.id === overId)
+    if (!activeGroup || !overGroup) return { kind: 'noop' }
+
+    const activeIsRoot = activeGroup.parentId === null
+    const overIsRoot = overGroup.parentId === null
+    const activeHasChildren = activeIsRoot && groups.some((g) => g.parentId === activeGroup.id)
+
+    if (overPosition === 'inside') {
+      // Reject moves that would create depth > 1 or a self-loop.
+      if (activeId === overId) return { kind: 'noop' }
+      if (activeHasChildren) return { kind: 'noop' }
+      if (!overIsRoot) return { kind: 'noop' }
+      return { kind: 'reparent-group', groupId: activeId, newParentId: overId, insertIndex: undefined }
+    }
+
+    // before / after
+    if (activeIsRoot && overIsRoot) {
+      const sortedRoots = groups.filter((g) => g.parentId === null).sort((a, b) => a.sortIndex - b.sortIndex)
+      const oldIndex = sortedRoots.findIndex((g) => g.id === activeId)
+      const overIndex = sortedRoots.findIndex((g) => g.id === overId)
+      if (oldIndex < 0 || overIndex < 0) return { kind: 'noop' }
+      let newIndex = overPosition === 'before' ? overIndex : overIndex + 1
+      if (oldIndex < newIndex) newIndex -= 1
+      if (newIndex < 0) newIndex = 0
+      if (newIndex > sortedRoots.length - 1) newIndex = sortedRoots.length - 1
+      if (oldIndex === newIndex) return { kind: 'noop' }
+      return { kind: 'reorder-groups', oldIndex, newIndex }
+    }
+
+    if (!activeIsRoot && overIsRoot) {
+      // Un-nest active and place it among the roots relative to overGroup.
+      const sortedRoots = groups.filter((g) => g.parentId === null).sort((a, b) => a.sortIndex - b.sortIndex)
+      const overIndex = sortedRoots.findIndex((g) => g.id === overId)
+      if (overIndex < 0) return { kind: 'noop' }
+      const insertIndex = overPosition === 'before' ? overIndex : overIndex + 1
+      return { kind: 'reparent-group', groupId: activeId, newParentId: null, insertIndex }
+    }
+
+    if (!overIsRoot) {
+      // overGroup is a child; sibling-reorder if same parent, otherwise reparent under overGroup's parent.
+      const newParentId = overGroup.parentId
+      if (activeHasChildren) return { kind: 'noop' }
+      const siblings = groups
+        .filter((g) => g.parentId === newParentId)
+        .sort((a, b) => a.sortIndex - b.sortIndex)
+      const overIndex = siblings.findIndex((g) => g.id === overId)
+      if (overIndex < 0) return { kind: 'noop' }
+      let insertIndex = overPosition === 'before' ? overIndex : overIndex + 1
+      const oldIndex = siblings.findIndex((g) => g.id === activeId)
+      if (oldIndex >= 0 && oldIndex < insertIndex) insertIndex -= 1
+      return { kind: 'reparent-group', groupId: activeId, newParentId, insertIndex }
+    }
+
+    return { kind: 'noop' }
   }
 
   if (activeType !== 'session') return { kind: 'noop' }

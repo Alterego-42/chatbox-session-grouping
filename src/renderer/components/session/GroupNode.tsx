@@ -1,12 +1,15 @@
 import { useDroppable } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
+import NiceModal from '@ebay/nice-modal-react'
 import { ActionIcon, Flex, Text, TextInput } from '@mantine/core'
 import {
   IconChevronDown,
   IconChevronRight,
+  IconCopy,
   IconDots,
   IconFolder,
   IconInbox,
+  IconPalette,
   IconPencil,
   IconPlus,
   IconTrash,
@@ -17,6 +20,8 @@ import { useTranslation } from 'react-i18next'
 import ActionMenu, { type ActionMenuItemProps } from '@/components/ActionMenu'
 import { router } from '@/router'
 import { deleteGroup, updateGroup } from '@/stores/groupStore'
+import { duplicateGroup } from '@/stores/session/groups'
+import { add as addToast } from '@/stores/toastActions'
 import type { FlatRow } from '@/utils/session-tree'
 
 export interface GroupNodeProps {
@@ -137,6 +142,26 @@ function GroupNodeInner({
                 setRenaming(true)
               },
             },
+            {
+              text: t('Set color'),
+              icon: IconPalette,
+              onClick: () => {
+                void NiceModal.show('set-group-color', { groupId: row.group.id })
+              },
+            },
+            {
+              text: t('Duplicate group'),
+              icon: IconCopy,
+              onClick: async () => {
+                try {
+                  await duplicateGroup(row.group.id)
+                  addToast(t('Group duplicated'))
+                } catch (error) {
+                  console.error('Failed to duplicate group:', error)
+                  addToast(error instanceof Error ? error.message : t('Failed to duplicate group'))
+                }
+              },
+            },
             { divider: true },
             {
               doubleCheck: true,
@@ -162,15 +187,16 @@ function GroupNodeInner({
         gap={6}
         mx="xs"
         px="xs"
-        py={6}
+        py={row.depth > 0 ? 2 : 6}
         className={clsx(
           'cursor-pointer rounded-sm group/group-node',
+          row.depth > 0 ? '' : 'bg-chatbox-background-gray-primary',
           dropIndicator === 'inside'
             ? 'bg-chatbox-background-brand-secondary'
             : 'hover:bg-chatbox-background-gray-secondary',
           isOverlay && 'shadow-md opacity-90 bg-chatbox-background-primary'
         )}
-        style={{ paddingLeft: row.depth * 12 + 8 }}
+        style={{ paddingLeft: row.depth * 18 + 8 }}
         onClick={onToggle}
         {...dragAttributes}
         {...dragListeners}
@@ -185,7 +211,15 @@ function GroupNodeInner({
         <ChevronIcon size={16} />
       </ActionIcon>
 
-      <FolderIcon size={16} className="text-chatbox-tertiary shrink-0" />
+      <FolderIcon
+        size={16}
+        className={
+          row.kind === 'group' && row.group.color ? 'shrink-0' : 'text-chatbox-tertiary shrink-0'
+        }
+        style={
+          row.kind === 'group' && row.group.color ? { color: row.group.color } : undefined
+        }
+      />
 
       {renaming && !isUnassigned ? (
         <TextInput
@@ -199,9 +233,9 @@ function GroupNodeInner({
           onClick={(e) => e.stopPropagation()}
         />
       ) : (
-        <Text span flex={1} lineClamp={1} c="chatbox-primary">
+        <Text span flex={1} lineClamp={1} c="chatbox-primary" fw={row.depth > 0 ? 500 : 600} size={row.depth > 0 ? 'sm' : undefined}>
           {label}{' '}
-          <Text span c="chatbox-tertiary" size="xs">
+          <Text span c="chatbox-tertiary" size="xs" fw={400}>
             ({row.childCount})
           </Text>
         </Text>

@@ -142,4 +142,43 @@ describe('groupStore', () => {
     expect(storageState.sessions.find((s) => s.id === 's2')?.groupId).toBeUndefined()
     expect(storageState.groups.find((x) => x.id === g.id)).toBeUndefined()
   })
+
+  it('createGroup rejects parentId pointing to a non-root group', async () => {
+    const mod = await importFresh()
+    const root = await mod.createGroup({ name: 'root' })
+    const child = await mod.createGroup({ name: 'child', parentId: root.id })
+    await expect(mod.createGroup({ name: 'grand', parentId: child.id })).rejects.toThrow(/only one level/)
+  })
+
+  it('updateGroup rejects parentId === id (self-loop)', async () => {
+    const mod = await importFresh()
+    const g = await mod.createGroup({ name: 'A' })
+    await expect(mod.updateGroup(g.id, { parentId: g.id })).rejects.toThrow(/cannot set parentId to self/)
+  })
+
+  it('updateGroup rejects parentId pointing to a non-root group', async () => {
+    const mod = await importFresh()
+    const root = await mod.createGroup({ name: 'root' })
+    const child = await mod.createGroup({ name: 'child', parentId: root.id })
+    const other = await mod.createGroup({ name: 'other' })
+    await expect(mod.updateGroup(other.id, { parentId: child.id })).rejects.toThrow(/only one level/)
+  })
+
+  it('updateGroup rejects nesting a group that still owns children', async () => {
+    const mod = await importFresh()
+    const a = await mod.createGroup({ name: 'A' })
+    const b = await mod.createGroup({ name: 'B' })
+    await mod.createGroup({ name: 'A-child', parentId: a.id })
+    await expect(mod.updateGroup(a.id, { parentId: b.id })).rejects.toThrow(/still owns children/)
+  })
+
+  it('updateGroup happy path: reparent a leaf root under another root, then un-nest', async () => {
+    const mod = await importFresh()
+    const a = await mod.createGroup({ name: 'A' })
+    const b = await mod.createGroup({ name: 'B' })
+    await mod.updateGroup(a.id, { parentId: b.id })
+    expect(storageState.groups.find((g) => g.id === a.id)?.parentId).toBe(b.id)
+    await mod.updateGroup(a.id, { parentId: null })
+    expect(storageState.groups.find((g) => g.id === a.id)?.parentId).toBe(null)
+  })
 })

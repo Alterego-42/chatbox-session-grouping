@@ -15,6 +15,7 @@ import MoveSessionToGroup from './MoveSessionToGroup'
 import ReportContent from './ReportContent'
 import SessionSettings from './SessionSettings'
 import SessionSummary from './SessionSummary'
+import SetGroupColor from './SetGroupColor'
 import ThreadNameEdit from './ThreadNameEdit'
 import Welcome from './Welcome'
 import CopilotSettingsModal from '../routes/copilots/-components/CopilotSettingsModal'
@@ -38,3 +39,4 @@ NiceModal.register('copilot-settings', CopilotSettingsModal)
 NiceModal.register('move-session-to-group', MoveSessionToGroup)
 NiceModal.register('session-summary', SessionSummary)
 NiceModal.register('create-group', CreateGroup)
+NiceModal.register('set-group-color', SetGroupColor)

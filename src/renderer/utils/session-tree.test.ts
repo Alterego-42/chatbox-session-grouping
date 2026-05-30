@@ -125,4 +125,74 @@ describe('buildFlatTree', () => {
     const knownGroup = rows.find((r) => r.kind === 'group' && r.id === 'group:1')
     expect(knownGroup).toMatchObject({ childCount: 1 })
   })
+
+  it('renders one root with two children + sessions in each at the right depths', () => {
+    const groups = [
+      group({ id: 'group:root', sortIndex: 0 }),
+      group({ id: 'group:c1', parentId: 'group:root', sortIndex: 0 }),
+      group({ id: 'group:c2', parentId: 'group:root', sortIndex: 1 }),
+    ]
+    const sessions = [
+      meta({ id: 'sr', groupId: 'group:root' }),
+      meta({ id: 'sc1', groupId: 'group:c1' }),
+      meta({ id: 'sc2', groupId: 'group:c2' }),
+    ]
+    const rows = buildFlatTree(groups, sessions, {})
+    const summary = rows
+      .filter((r) => r.kind !== 'unassigned-root')
+      .map((r) => ({ kind: r.kind, id: r.id, depth: r.depth }))
+    expect(summary).toEqual([
+      { kind: 'group', id: 'group:root', depth: 0 },
+      { kind: 'session', id: 'sr', depth: 1 },
+      { kind: 'group', id: 'group:c1', depth: 1 },
+      { kind: 'session', id: 'sc1', depth: 2 },
+      { kind: 'group', id: 'group:c2', depth: 1 },
+      { kind: 'session', id: 'sc2', depth: 2 },
+    ])
+    const rootRow = rows.find((r) => r.kind === 'group' && r.id === 'group:root')
+    expect(rootRow).toMatchObject({ childCount: 3 })
+  })
+
+  it('collapsed root hides its children and child sessions', () => {
+    const groups = [
+      group({ id: 'group:root', sortIndex: 0 }),
+      group({ id: 'group:c1', parentId: 'group:root', sortIndex: 0 }),
+    ]
+    const sessions = [meta({ id: 'sc1', groupId: 'group:c1' })]
+    const rows = buildFlatTree(groups, sessions, { 'group:root': false })
+    const groupRows = rows.filter((r) => r.kind === 'group')
+    expect(groupRows).toHaveLength(1)
+    expect(groupRows[0]).toMatchObject({ id: 'group:root', expanded: false })
+    expect(rows.filter((r) => r.kind === 'session')).toHaveLength(0)
+  })
+
+  it('child whose parentId points to a deleted group is rendered as a top-level root', () => {
+    const groups = [
+      group({ id: 'group:keeps', sortIndex: 0 }),
+      group({ id: 'group:orphan', parentId: 'group:gone', sortIndex: 1 }),
+    ]
+    const rows = buildFlatTree(groups, [], {})
+    const groupRows = rows.filter((r) => r.kind === 'group')
+    expect(groupRows).toEqual([
+      expect.objectContaining({ id: 'group:keeps', depth: 0 }),
+      expect.objectContaining({ id: 'group:orphan', depth: 0 }),
+    ])
+  })
+
+  it('mixed: 2 roots, one with a child, one without', () => {
+    const groups = [
+      group({ id: 'group:a', sortIndex: 0 }),
+      group({ id: 'group:b', sortIndex: 1 }),
+      group({ id: 'group:b1', parentId: 'group:b', sortIndex: 0 }),
+    ]
+    const rows = buildFlatTree(groups, [], {})
+    const groupRows = rows
+      .filter((r) => r.kind === 'group')
+      .map((r) => ({ id: r.id, depth: r.depth }))
+    expect(groupRows).toEqual([
+      { id: 'group:a', depth: 0 },
+      { id: 'group:b', depth: 0 },
+      { id: 'group:b1', depth: 1 },
+    ])
+  })
 })

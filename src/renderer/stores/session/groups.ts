@@ -1,7 +1,8 @@
 import { arrayMove } from '@dnd-kit/sortable'
-import type { SessionMeta } from '@shared/types'
+import type { SessionGroup, SessionMeta } from '@shared/types'
 import * as chatStore from '../chatStore'
 import * as groupStore from '../groupStore'
+import { _copySession as copySession } from './crud'
 
 function groupKey(groupId: string | null | undefined): string | null {
   return groupId ?? null
@@ -55,4 +56,49 @@ export async function reorderGroups(oldIndex: number, newIndex: number): Promise
     const reordered = arrayMove(sorted, oldIndex, newIndex)
     return reordered.map((g, i) => ({ ...g, sortIndex: i, updatedAt: Date.now() }))
   })
+}
+
+export async function duplicateGroup(groupId: string): Promise<SessionGroup> {
+  const allGroups = await groupStore.listGroups()
+  const source = allGroups.find((g) => g.id === groupId)
+  if (!source) {
+    throw new Error(`duplicateGroup: group "${groupId}" not found`)
+  }
+
+  const isRoot = source.parentId === null
+  const childGroups = isRoot ? allGroups.filter((g) => g.parentId === source.id) : []
+  const childGroupIds = new Set(childGroups.map((g) => g.id))
+
+  const sessions = await chatStore.listSessionsMeta()
+  const sessionsAtSource = sessions.filter((s) => s.groupId === source.id)
+  const sessionsInChildren = sessions.filter((s) => s.groupId && childGroupIds.has(s.groupId))
+
+  const newRoot = await groupStore.createGroup({
+    name: `${source.name} (copy)`,
+    parentId: source.parentId,
+    color: source.color,
+  })
+
+  const oldChildIdToNewChildId = new Map<string, string>()
+  for (const child of childGroups) {
+    const created = await groupStore.createGroup({
+      name: child.name,
+      parentId: newRoot.id,
+      color: child.color,
+    })
+    oldChildIdToNewChildId.set(child.id, created.id)
+  }
+
+  for (const s of sessionsAtSource) {
+    const copied = await copySession(s)
+    await moveSessionToGroup(copied.id, newRoot.id, undefined)
+  }
+  for (const s of sessionsInChildren) {
+    const newChildId = s.groupId ? oldChildIdToNewChildId.get(s.groupId) : undefined
+    if (!newChildId) continue
+    const copied = await copySession(s)
+    await moveSessionToGroup(copied.id, newChildId, undefined)
+  }
+
+  return newRoot
 }

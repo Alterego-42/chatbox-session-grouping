@@ -149,4 +149,91 @@ describe('routeDragEnd', () => {
     })
     expect(r).toEqual({ kind: 'reorder-groups', oldIndex: 0, newIndex: 1 })
   })
+
+  test('root onto root inside reparents the active group as a child', () => {
+    const r = routeDragEnd({
+      active: { id: 'g1', data: { current: { type: 'group', groupId: 'g1' } } },
+      over: { id: 'g2', data: { current: { type: 'group', groupId: 'g2' } } },
+      overPosition: 'inside',
+      sessions,
+      groups,
+    })
+    expect(r).toEqual({ kind: 'reparent-group', groupId: 'g1', newParentId: 'g2', insertIndex: undefined })
+  })
+
+  test('root onto root inside is rejected when active already owns children', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('g1', 0),
+      group('g2', 1),
+      { ...group('child-of-g1', 2), parentId: 'g1' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'g1', data: { current: { type: 'group', groupId: 'g1' } } },
+      over: { id: 'g2', data: { current: { type: 'group', groupId: 'g2' } } },
+      overPosition: 'inside',
+      sessions,
+      groups: nestedGroups,
+    })
+    expect(r.kind).toBe('noop')
+  })
+
+  test('root onto child inside is rejected (would create depth > 1)', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('g1', 0),
+      group('g2', 1),
+      { ...group('c1', 2), parentId: 'g2' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'g1', data: { current: { type: 'group', groupId: 'g1' } } },
+      over: { id: 'c1', data: { current: { type: 'group', groupId: 'c1' } } },
+      overPosition: 'inside',
+      sessions,
+      groups: nestedGroups,
+    })
+    expect(r.kind).toBe('noop')
+  })
+
+  test('child onto a different root inside reparents to the new root', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('g1', 0),
+      group('g2', 1),
+      { ...group('c1', 2), parentId: 'g1' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'c1', data: { current: { type: 'group', groupId: 'c1' } } },
+      over: { id: 'g2', data: { current: { type: 'group', groupId: 'g2' } } },
+      overPosition: 'inside',
+      sessions,
+      groups: nestedGroups,
+    })
+    expect(r).toEqual({ kind: 'reparent-group', groupId: 'c1', newParentId: 'g2', insertIndex: undefined })
+  })
+
+  test('child onto a root with position before un-nests and reorders among roots', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('g1', 0),
+      group('g2', 1),
+      { ...group('c1', 2), parentId: 'g1' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'c1', data: { current: { type: 'group', groupId: 'c1' } } },
+      over: { id: 'g2', data: { current: { type: 'group', groupId: 'g2' } } },
+      overPosition: 'before',
+      sessions,
+      groups: nestedGroups,
+    })
+    // sortedRoots = [g1, g2]; overIndex of g2 = 1; insertIndex = 1
+    expect(r).toEqual({ kind: 'reparent-group', groupId: 'c1', newParentId: null, insertIndex: 1 })
+  })
+
+  test('group inside itself is a noop (self-loop)', () => {
+    const r = routeDragEnd({
+      active: { id: 'g1', data: { current: { type: 'group', groupId: 'g1' } } },
+      over: { id: 'g1', data: { current: { type: 'group', groupId: 'g1' } } },
+      overPosition: 'inside',
+      sessions,
+      groups,
+    })
+    expect(r.kind).toBe('noop')
+  })
 })

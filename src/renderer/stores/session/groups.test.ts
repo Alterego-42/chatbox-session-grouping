@@ -59,9 +59,43 @@ const updateGroupListMock = vi.fn(async (updater: UpdaterFn<SessionGroup[]>) => 
   storageState.groups = updater(storageState.groups)
 })
 
+let groupCounter = 0
+const createGroupMock = vi.fn(async (input: { name: string; parentId?: string | null; color?: string }) => {
+  groupCounter += 1
+  const id = `group:new-${groupCounter}`
+  const created: SessionGroup = {
+    id,
+    name: input.name,
+    parentId: input.parentId ?? null,
+    sortIndex: storageState.groups.length,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    ...(input.color !== undefined ? { color: input.color } : {}),
+  }
+  storageState.groups = [...storageState.groups, created]
+  return created
+})
+
 vi.mock('../groupStore', () => ({
   updateGroupList: (updater: UpdaterFn<SessionGroup[]>) => updateGroupListMock(updater),
   listGroups: async () => storageState.groups,
+  createGroup: (input: { name: string; parentId?: string | null; color?: string }) => createGroupMock(input),
+}))
+
+let sessionCounter = 0
+const copySessionMock = vi.fn(async (sourceMeta: SessionMeta) => {
+  sessionCounter += 1
+  const copied: SessionMeta = {
+    ...sourceMeta,
+    id: `copied-${sessionCounter}-${sourceMeta.id}`,
+    name: `${sourceMeta.name} (copy)`,
+  }
+  storageState.sessions = [...storageState.sessions, copied]
+  return copied
+})
+
+vi.mock('./crud', () => ({
+  _copySession: (sourceMeta: SessionMeta) => copySessionMock(sourceMeta),
 }))
 
 async function importFresh() {
@@ -88,6 +122,35 @@ describe('session/groups', () => {
     updateGroupListMock.mockClear()
     updateGroupListMock.mockImplementation(async (updater: UpdaterFn<SessionGroup[]>) => {
       storageState.groups = updater(storageState.groups)
+    })
+    createGroupMock.mockClear()
+    groupCounter = 0
+    createGroupMock.mockImplementation(async (input: { name: string; parentId?: string | null; color?: string }) => {
+      groupCounter += 1
+      const id = `group:new-${groupCounter}`
+      const created: SessionGroup = {
+        id,
+        name: input.name,
+        parentId: input.parentId ?? null,
+        sortIndex: storageState.groups.length,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ...(input.color !== undefined ? { color: input.color } : {}),
+      }
+      storageState.groups = [...storageState.groups, created]
+      return created
+    })
+    copySessionMock.mockClear()
+    sessionCounter = 0
+    copySessionMock.mockImplementation(async (sourceMeta: SessionMeta) => {
+      sessionCounter += 1
+      const copied: SessionMeta = {
+        ...sourceMeta,
+        id: `copied-${sessionCounter}-${sourceMeta.id}`,
+        name: `${sourceMeta.name} (copy)`,
+      }
+      storageState.sessions = [...storageState.sessions, copied]
+      return copied
     })
   })
 
@@ -144,5 +207,57 @@ describe('session/groups', () => {
     const sorted = [...storageState.groups].sort((a, b) => a.sortIndex - b.sortIndex)
     expect(sorted.map((g) => g.id)).toEqual(['group:c', 'group:a', 'group:b'])
     expect(sorted.map((g) => g.sortIndex)).toEqual([0, 1, 2])
+  })
+
+  it('duplicateGroup on a leaf root with 2 sessions creates 1 group + 2 sessions', async () => {
+    const mod = await importFresh()
+    storageState.groups = [
+      { id: 'group:src', name: 'src', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1, color: '#abc' },
+    ]
+    storageState.sessions = [
+      { id: 's1', name: 's1', groupId: 'group:src' } as SessionMeta,
+      { id: 's2', name: 's2', groupId: 'group:src' } as SessionMeta,
+      { id: 's3', name: 's3' } as SessionMeta,
+    ]
+
+    const created = await mod.duplicateGroup('group:src')
+
+    expect(created.name).toBe('src (copy)')
+    expect(created.parentId).toBe(null)
+    expect(created.color).toBe('#abc')
+    expect(createGroupMock).toHaveBeenCalledTimes(1)
+    expect(copySessionMock).toHaveBeenCalledTimes(2)
+    const copiedSessions = storageState.sessions.filter((s) => s.id.startsWith('copied-'))
+    expect(copiedSessions).toHaveLength(2)
+    expect(copiedSessions.every((s) => s.groupId === created.id)).toBe(true)
+  })
+
+  it('duplicateGroup on a root with one child + sessions maps children correctly', async () => {
+    const mod = await importFresh()
+    storageState.groups = [
+      { id: 'group:src', name: 'src', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 },
+      { id: 'group:c1', name: 'c1', parentId: 'group:src', sortIndex: 1, createdAt: 2, updatedAt: 2 },
+    ]
+    storageState.sessions = [
+      { id: 'sr', name: 'sr', groupId: 'group:src' } as SessionMeta,
+      { id: 'sc', name: 'sc', groupId: 'group:c1' } as SessionMeta,
+      { id: 'unrelated', name: 'unrelated' } as SessionMeta,
+    ]
+
+    const created = await mod.duplicateGroup('group:src')
+
+    expect(createGroupMock).toHaveBeenCalledTimes(2)
+    expect(copySessionMock).toHaveBeenCalledTimes(2)
+    const groupsAfter = storageState.groups
+    const newRoot = groupsAfter.find((g) => g.id === created.id)
+    expect(newRoot?.parentId).toBe(null)
+    const newChild = groupsAfter.find((g) => g.parentId === created.id)
+    expect(newChild?.name).toBe('c1')
+    const copiedSessions = storageState.sessions.filter((s) => s.id.startsWith('copied-'))
+    expect(copiedSessions).toHaveLength(2)
+    const copyOfRootSession = copiedSessions.find((s) => s.id.endsWith('sr'))
+    const copyOfChildSession = copiedSessions.find((s) => s.id.endsWith('sc'))
+    expect(copyOfRootSession?.groupId).toBe(created.id)
+    expect(copyOfChildSession?.groupId).toBe(newChild?.id)
   })
 })

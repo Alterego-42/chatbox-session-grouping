@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { Virtuoso } from 'react-virtuoso'
 import { expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
 import { useSessionList } from '@/stores/chatStore'
-import { useGroups } from '@/stores/groupStore'
+import { updateGroup, useGroups } from '@/stores/groupStore'
 import { moveSessionToGroup, reorderGroups, reorderWithinGroup } from '@/stores/sessionActions'
 import { useUIStore } from '@/stores/uiStore'
 import { type DropPosition, routeDragEnd } from '@/utils/dnd-route'
@@ -144,8 +144,11 @@ export default function SessionList(props: Props) {
         await reorderGroups(action.oldIndex, action.newIndex)
         break
       case 'reparent-group':
-        // Future use: nested groups. No handler today.
-        return
+        await updateGroup(action.groupId, { parentId: action.newParentId })
+        if (typeof action.insertIndex === 'number') {
+          await reorderGroups(action.insertIndex, action.insertIndex)
+        }
+        break
     }
     refetch()
   }
@@ -254,7 +257,7 @@ export default function SessionList(props: Props) {
         )}
         <DragOverlay dropAnimation={null}>
           {activeRow?.kind === 'session' ? (
-            <div style={{ paddingLeft: activeRow.depth * 12 }}>
+            <div style={{ paddingLeft: activeRow.depth * 18 }}>
               <SessionItem isOverlay selected={false} session={activeRow.session} />
             </div>
           ) : activeRow?.kind === 'group' ? (
@@ -281,7 +284,7 @@ function SortableSessionRow(props: {
     <div
       ref={setNodeRef}
       className="relative"
-      style={{ paddingLeft: depth * 12, opacity: isDragging ? 0.4 : 1 }}
+      style={{ paddingLeft: depth * 18, opacity: isDragging ? 0.4 : 1 }}
       {...attributes}
       {...listeners}
     >

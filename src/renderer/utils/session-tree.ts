@@ -47,24 +47,52 @@ export function buildFlatTree(
   }
 
   const rows: FlatRow[] = []
-  // TODO: v1 ignores parentId-based nesting; treat every group as top-level. Re-enable nested rendering when phase 2 lands.
-  const sortedGroups = [...groups].sort((a, b) => a.sortIndex - b.sortIndex)
-  for (const g of sortedGroups) {
-    const children = sessionsByGroup.get(g.id) ?? []
+  const groupById = new Map(groups.map((g) => [g.id, g]))
+  const rootGroups: SessionGroup[] = []
+  const childrenByParent = new Map<string, SessionGroup[]>()
+  const orphanedAsRoot: SessionGroup[] = []
+  for (const g of groups) {
+    if (g.parentId === null) {
+      rootGroups.push(g)
+      continue
+    }
+    const parent = groupById.get(g.parentId)
+    // Render orphans (parent missing) and depth-violators (parent is itself a child) at root.
+    if (!parent || parent.parentId !== null) {
+      orphanedAsRoot.push(g)
+      continue
+    }
+    const arr = childrenByParent.get(g.parentId) ?? []
+    arr.push(g)
+    childrenByParent.set(g.parentId, arr)
+  }
+
+  const allRoots = [...rootGroups, ...orphanedAsRoot].sort((a, b) => a.sortIndex - b.sortIndex)
+
+  const emitGroup = (g: SessionGroup, depth: number) => {
+    const ownSessions = sessionsByGroup.get(g.id) ?? []
+    const childGroups = (childrenByParent.get(g.id) ?? []).slice().sort((a, b) => a.sortIndex - b.sortIndex)
     const groupExpanded = isExpanded(expanded, g.id)
+    const childCount = ownSessions.length + childGroups.length
     rows.push({
       kind: 'group',
       id: g.id,
       group: g,
-      depth: 0,
-      childCount: children.length,
+      depth,
+      childCount,
       expanded: groupExpanded,
     })
-    if (groupExpanded) {
-      for (const s of sortInGroup(children)) {
-        rows.push({ kind: 'session', id: s.id, session: s, depth: 1, groupId: g.id })
-      }
+    if (!groupExpanded) return
+    for (const s of sortInGroup(ownSessions)) {
+      rows.push({ kind: 'session', id: s.id, session: s, depth: depth + 1, groupId: g.id })
     }
+    for (const child of childGroups) {
+      emitGroup(child, depth + 1)
+    }
+  }
+
+  for (const g of allRoots) {
+    emitGroup(g, 0)
   }
 
   const unassignedExpanded = isExpanded(expanded, UNASSIGNED_KEY)
