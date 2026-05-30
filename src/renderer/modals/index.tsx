@@ -4,6 +4,7 @@ import ArtifactPreview from './ArtifactPreview'
 import AttachLink from './AttachLink'
 import ClearSessionList from './ClearSessionList'
 import ContentViewer from './ContentViewer'
+import CreateGroup from './CreateGroup'
 import EdgeOneDeploySuccess from './EdgeOneDeploySuccess'
 import ExportChat from './ExportChat'
 import FileParseError from './FileParseError'
@@ -36,3 +37,4 @@ NiceModal.register('edgeone-deploy-success', EdgeOneDeploySuccess)
 NiceModal.register('copilot-settings', CopilotSettingsModal)
 NiceModal.register('move-session-to-group', MoveSessionToGroup)
 NiceModal.register('session-summary', SessionSummary)
+NiceModal.register('create-group', CreateGroup)

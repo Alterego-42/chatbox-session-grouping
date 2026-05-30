@@ -1,4 +1,4 @@
-import { ActionIcon, Flex, Menu, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Flex, Text, TextInput } from '@mantine/core'
 import {
   IconChevronDown,
   IconChevronRight,
@@ -9,10 +9,11 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react'
-import { type KeyboardEvent, useState } from 'react'
+import { type KeyboardEvent, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { deleteGroup, updateGroup } from '@/stores/groupStore'
+import ActionMenu, { type ActionMenuItemProps } from '@/components/ActionMenu'
 import { router } from '@/router'
+import { deleteGroup, updateGroup } from '@/stores/groupStore'
 import type { FlatRow } from '@/utils/session-tree'
 
 export interface GroupNodeProps {
@@ -70,15 +71,32 @@ export default function GroupNode({ row, onToggle }: GroupNodeProps) {
     }
   }
 
-  const handleDelete = async () => {
-    if (isUnassigned) return
-    const confirmed = window.confirm(
-      String(t('Delete group "{{name}}"? Sessions will be moved to Unassigned.', { name: row.group.name }))
-    )
-    if (confirmed) {
-      await deleteGroup(row.group.id)
-    }
-  }
+  const actionMenuItems = useMemo<ActionMenuItemProps[]>(
+    () =>
+      isUnassigned
+        ? []
+        : [
+            {
+              text: t('Rename group'),
+              icon: IconPencil,
+              onClick: () => {
+                setDraftName(row.group.name)
+                setRenaming(true)
+              },
+            },
+            { divider: true },
+            {
+              doubleCheck: true,
+              text: t('Delete group'),
+              icon: IconTrash,
+              color: 'chatbox-error',
+              onClick: () => {
+                void deleteGroup(row.group.id)
+              },
+            },
+          ],
+    [isUnassigned, row, t]
+  )
 
   return (
     <Flex
@@ -136,47 +154,27 @@ export default function GroupNode({ row, onToggle }: GroupNodeProps) {
             <IconPlus size={14} />
           </ActionIcon>
 
-          <Menu
+          <ActionMenu
+            type="desktop"
+            items={actionMenuItems}
             position="bottom-start"
             opened={menuOpened}
             onChange={setMenuOpened}
-            withinPortal
-            closeOnItemClick
           >
-            <Menu.Target>
-              <ActionIcon
-                variant="transparent"
-                size={18}
-                color="chatbox-tertiary"
-                aria-label={t('Group actions')}
-                className={menuOpened ? '' : 'group-hover/group-node:visible invisible'}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setMenuOpened((v) => !v)
-                }}
-              >
-                <IconDots size={14} />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown onClick={(e) => e.stopPropagation()}>
-              <Menu.Item
-                leftSection={<IconPencil size={14} />}
-                onClick={() => {
-                  setDraftName(row.group.name)
-                  setRenaming(true)
-                }}
-              >
-                {t('Rename group')}
-              </Menu.Item>
-              <Menu.Item
-                leftSection={<IconTrash size={14} />}
-                color="red"
-                onClick={() => void handleDelete()}
-              >
-                {t('Delete group')}
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
+            <ActionIcon
+              variant="transparent"
+              size={18}
+              color="chatbox-tertiary"
+              aria-label={t('Group actions')}
+              className={menuOpened ? '' : 'group-hover/group-node:visible invisible'}
+              onClick={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+              }}
+            >
+              <IconDots size={14} />
+            </ActionIcon>
+          </ActionMenu>
         </>
       )}
     </Flex>

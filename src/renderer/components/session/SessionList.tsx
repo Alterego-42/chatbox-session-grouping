@@ -26,7 +26,7 @@ import { useTranslation } from 'react-i18next'
 import { Virtuoso } from 'react-virtuoso'
 import { expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
 import { useSessionList } from '@/stores/chatStore'
-import { createGroup, useGroups } from '@/stores/groupStore'
+import { useGroups } from '@/stores/groupStore'
 import { moveSessionToGroup, reorderWithinGroup } from '@/stores/sessionActions'
 import { useUIStore } from '@/stores/uiStore'
 import { buildFlatTree, type FlatRow } from '@/utils/session-tree'
@@ -112,12 +112,8 @@ export default function SessionList(props: Props) {
     refetch()
   }
 
-  const handleCreateGroup = async () => {
-    const name = window.prompt(String(t('New group name')), String(t('New group')))
-    if (!name || !name.trim()) {
-      return
-    }
-    await createGroup({ name: name.trim() })
+  const handleCreateGroup = () => {
+    void NiceModal.show('create-group')
   }
   const routerState = useRouterState()
 
