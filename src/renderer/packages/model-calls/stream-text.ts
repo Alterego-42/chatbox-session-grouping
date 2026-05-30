@@ -2,12 +2,14 @@ import { getModel } from '@shared/models'
 import { ChatboxAIAPIError, OCRError } from '@shared/models/errors'
 import { sequenceMessages } from '@shared/utils/message'
 import { getModelSettings } from '@shared/utils/model_settings'
+import NiceModal from '@ebay/nice-modal-react'
 import type { ModelMessage, ToolSet } from 'ai'
 import { t } from 'i18next'
 import { uniqueId } from 'lodash'
 import { createModelDependencies } from '@/adapters'
 import * as settingActions from '@/stores/settingActions'
 import { settingsStore } from '@/stores/settingsStore'
+import { SESSION_MANAGER_ID } from '@shared/defaults'
 import type {
   ModelInterface,
   OnResultChange,
@@ -35,6 +37,7 @@ import {
 } from './tools'
 import fileToolSet from './toolsets/file'
 import { getToolSet } from './toolsets/knowledge-base'
+import { buildSessionManagerToolset } from './toolsets/session-manager'
 import websearchToolSet, { parseLinkTool, webSearchTool } from './toolsets/web-search'
 
 /**
@@ -175,6 +178,17 @@ export async function streamText(
     toolSetInstructions += websearchToolSet.description
   }
 
+  const sessionManagerToolset =
+    sessionId === SESSION_MANAGER_ID
+      ? buildSessionManagerToolset({
+          confirmDangerous: (action) =>
+            NiceModal.show('confirm-dangerous-action', action) as Promise<boolean>,
+        })
+      : null
+  if (sessionManagerToolset) {
+    toolSetInstructions += sessionManagerToolset.description
+  }
+
   params.messages = injectModelSystemPrompt(
     model.modelId,
     params.messages,
@@ -313,6 +327,13 @@ export async function streamText(
       tools = {
         ...tools,
         ...fileToolSet.tools,
+      }
+    }
+
+    if (sessionManagerToolset) {
+      tools = {
+        ...tools,
+        ...sessionManagerToolset.tools,
       }
     }
 

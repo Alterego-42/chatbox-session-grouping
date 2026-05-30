@@ -3,6 +3,7 @@ import AppStoreRating from './AppStoreRating'
 import ArtifactPreview from './ArtifactPreview'
 import AttachLink from './AttachLink'
 import ClearSessionList from './ClearSessionList'
+import ConfirmDangerousAction from './ConfirmDangerousAction'
 import ContentViewer from './ContentViewer'
 import CreateGroup from './CreateGroup'
 import EdgeOneDeploySuccess from './EdgeOneDeploySuccess'
@@ -40,3 +41,4 @@ NiceModal.register('move-session-to-group', MoveSessionToGroup)
 NiceModal.register('session-summary', SessionSummary)
 NiceModal.register('create-group', CreateGroup)
 NiceModal.register('set-group-color', SetGroupColor)
+NiceModal.register('confirm-dangerous-action', ConfirmDangerousAction)
