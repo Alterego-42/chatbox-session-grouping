@@ -955,6 +955,10 @@
   "Generated at": "Generated at",
   "Failed to generate summary": "Failed to generate summary",
   "No summary yet": "No summary yet",
+  "Select conversations to export": "Select conversations to export",
+  "{{selected}} of {{total}} selected": "{{selected}} of {{total}} selected",
+  "{{count}} conversations selected": "{{count}} conversations selected",
+  "No conversations to select": "No conversations to select",
   "Default Summary Model": "Default Summary Model",
   "Chatbox will use this model to generate session summaries.": "Chatbox will use this model to generate session summaries."
 }

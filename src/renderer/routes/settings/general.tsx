@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  Collapse,
   Divider,
   FileButton,
   Flex,
@@ -13,20 +14,30 @@ import {
   TextInput,
   Title,
 } from '@mantine/core'
-import { type Language, type ProviderInfo, type Settings, Theme } from '@shared/types'
+import {
+  type Language,
+  type ProviderInfo,
+  type SessionGroup,
+  type SessionMeta,
+  type Settings,
+  Theme,
+} from '@shared/types'
 import { formatFileSize } from '@shared/utils'
 import { IconInfoCircle } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
 import dayjs from 'dayjs'
 import { mapValues, uniqBy } from 'lodash'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AdaptiveSelect } from '@/components/AdaptiveSelect'
 import LazySlider from '@/components/common/LazySlider'
+import ExportSelectionTree from '@/components/ExportSelectionTree'
 import { languageNameMap, languages } from '@/i18n/locales'
+import { deriveInitialSelection, filterGroupsForExport, filterSessionsForExport } from '@/lib/export-helpers'
 import platform from '@/platform'
 import storage, { StorageKey } from '@/storage'
-import { recoverSessionList } from '@/stores/chatStore'
+import { recoverSessionList, useSessionList } from '@/stores/chatStore'
+import { useGroups } from '@/stores/groupStore'
 import { migrateOnData } from '@/stores/migration'
 import { useSettingsStore } from '@/stores/settingsStore'
 
@@ -306,6 +317,20 @@ const ImportExportDataSection = () => {
     ExportDataItem.Conversations,
     ExportDataItem.Copilot,
   ])
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set())
+
+  const { groups } = useGroups()
+  const { sessionMetaList } = useSessionList()
+  const userTouchedRef = useRef(false)
+
+  useEffect(() => {
+    if (userTouchedRef.current) return
+    if (!groups || !sessionMetaList) return
+    const initial = deriveInitialSelection(groups, sessionMetaList)
+    setSelectedGroupIds(initial.groupIds)
+    setSelectedSessionIds(initial.sessionIds)
+  }, [groups, sessionMetaList])
 
   const isLoading = isExporting || isImporting
 
@@ -330,21 +355,71 @@ const ImportExportDataSection = () => {
         if (!isFirstItem) yield ','
         yield `"__exported_at":"${date.toISOString()}"`
 
+        yield ','
+        yield `"__exported_partial":${JSON.stringify(selectedSessionIds.size > 0 || selectedGroupIds.size > 0)}`
+        yield ','
+        yield `"__exported_session_count":${selectedSessionIds.size}`
+        yield ','
+        yield `"__exported_group_count":${selectedGroupIds.size}`
+
         // 获取所有存储的keys
         try {
           const allKeys = await storage.getAllKeys()
 
           for (const key of allKeys) {
+            // SessionGroupsList: apply group selection filter with parent-chain preservation
+            if (key === StorageKey.SessionGroupsList && exportItems.includes(ExportDataItem.Conversations)) {
+              try {
+                const raw = await storage.getItem<SessionGroup[]>(key, [])
+                const filtered = filterGroupsForExport(raw ?? [], selectedGroupIds)
+                yield ','
+                yield `"${key}":${JSON.stringify(filtered)}`
+              } catch (error) {
+                console.warn(`Failed to export key ${key}:`, error)
+              }
+              continue
+            }
+
+            // ChatSessionsList: filter by selectedSessionIds and clear dangling groupIds
+            if (key === StorageKey.ChatSessionsList && exportItems.includes(ExportDataItem.Conversations)) {
+              try {
+                const raw = await storage.getItem<SessionMeta[]>(key, [])
+                const groupsRaw = await storage.getItem<SessionGroup[]>(StorageKey.SessionGroupsList, [])
+                const retainedGroups = filterGroupsForExport(groupsRaw ?? [], selectedGroupIds)
+                const retainedGroupIds = new Set(retainedGroups.map((g) => g.id))
+                const filtered = filterSessionsForExport(raw ?? [], selectedSessionIds, retainedGroupIds)
+                yield ','
+                yield `"${key}":${JSON.stringify(filtered)}`
+              } catch (error) {
+                console.warn(`Failed to export key ${key}:`, error)
+              }
+              continue
+            }
+
+            // session:* entries: skip any whose id is not selected
+            if (key.startsWith('session:') && exportItems.includes(ExportDataItem.Conversations)) {
+              const id = key.slice('session:'.length)
+              if (!selectedSessionIds.has(id)) {
+                continue
+              }
+              try {
+                const value = await storage.getItem(key, null)
+                if (value !== null) {
+                  yield ','
+                  yield `"${key}":${JSON.stringify(value)}`
+                }
+              } catch (error) {
+                console.warn(`Failed to export key ${key}:`, error)
+              }
+              continue
+            }
+
             let shouldExport = false
 
             // 判断是否需要导出这个key
             if (key === StorageKey.Settings && exportItems.includes(ExportDataItem.Setting)) {
               shouldExport = true
-            } else if (key.startsWith('session:') && exportItems.includes(ExportDataItem.Conversations)) {
-              shouldExport = true
             } else if (key === StorageKey.MyCopilots && exportItems.includes(ExportDataItem.Copilot)) {
-              shouldExport = true
-            } else if (key === StorageKey.ChatSessionsList && exportItems.includes(ExportDataItem.Conversations)) {
               shouldExport = true
             } else if (key === StorageKey.ChatSessionSettings && exportItems.includes(ExportDataItem.Conversations)) {
               shouldExport = true
@@ -450,7 +525,11 @@ const ImportExportDataSection = () => {
           )
 
           const entriesToImport = Object.entries(importData).filter(
-            ([key]) => key !== StorageKey.ChatSessionsList && key !== StorageKey.ConfigVersion && !key.startsWith('__')
+            ([key]) =>
+              key !== StorageKey.ChatSessionsList &&
+              key !== StorageKey.SessionGroupsList &&
+              key !== StorageKey.ConfigVersion &&
+              !key.startsWith('__')
           )
 
           const importedChatSessions = Array.isArray(importData[StorageKey.ChatSessionsList])
@@ -467,6 +546,15 @@ const ImportExportDataSection = () => {
             await storage.setItemNow(
               StorageKey.ChatSessionsList,
               uniqBy([...previousChatSessions, ...importedChatSessions], 'id')
+            )
+          }
+
+          const importedGroupsRaw = importData[StorageKey.SessionGroupsList]
+          if (Array.isArray(importedGroupsRaw)) {
+            const previousGroups = await storage.getItem<SessionGroup[]>(StorageKey.SessionGroupsList, [])
+            await storage.setItemNow(
+              StorageKey.SessionGroupsList,
+              uniqBy([...previousGroups, ...importedGroupsRaw], 'id')
             )
           }
 
@@ -523,22 +611,42 @@ const ImportExportDataSection = () => {
           { label: t('API KEY & License'), value: ExportDataItem.Key },
           { label: t('Chat History'), value: ExportDataItem.Conversations },
           { label: t('My Copilots'), value: ExportDataItem.Copilot },
-        ].map(({ label, value }) => (
-          <Checkbox
-            key={value}
-            checked={exportItems.includes(value)}
-            label={label}
-            disabled={isLoading}
-            onChange={(e) => {
-              const checked = e.currentTarget.checked
-              if (checked && !exportItems.includes(value)) {
-                setExportItems([...exportItems, value])
-              } else if (!checked) {
-                setExportItems(exportItems.filter((v) => v !== value))
-              }
-            }}
-          />
-        ))}
+        ].map(({ label, value }) => {
+          const isConversations = value === ExportDataItem.Conversations
+          const conversationsChecked = exportItems.includes(ExportDataItem.Conversations)
+          return (
+            <Stack key={value} gap="xs">
+              <Checkbox
+                checked={exportItems.includes(value)}
+                label={label}
+                disabled={isLoading}
+                onChange={(e) => {
+                  const checked = e.currentTarget.checked
+                  if (checked && !exportItems.includes(value)) {
+                    setExportItems([...exportItems, value])
+                  } else if (!checked) {
+                    setExportItems(exportItems.filter((v) => v !== value))
+                  }
+                }}
+              />
+              {isConversations && (
+                <Collapse in={conversationsChecked}>
+                  <ExportSelectionTree
+                    groups={groups ?? []}
+                    sessions={sessionMetaList ?? []}
+                    value={{ groupIds: selectedGroupIds, sessionIds: selectedSessionIds }}
+                    onChange={(next) => {
+                      userTouchedRef.current = true
+                      setSelectedGroupIds(next.groupIds)
+                      setSelectedSessionIds(next.sessionIds)
+                    }}
+                    disabled={isLoading || !conversationsChecked}
+                  />
+                </Collapse>
+              )}
+            </Stack>
+          )
+        })}
         <Button className="self-start" onClick={onExport} disabled={isLoading} loading={isExporting}>
           {isExporting ? t('Exporting...') : t('Export Selected Data')}
         </Button>
