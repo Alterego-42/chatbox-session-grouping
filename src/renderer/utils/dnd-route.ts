@@ -78,6 +78,15 @@ export function routeDragEnd({ active, over, overPosition = 'after', sessions, g
       if (activeId === overId) return { kind: 'noop' }
       if (activeHasChildren) return { kind: 'noop' }
       if (!overIsRoot) return { kind: 'noop' }
+      // If active is already a child of overGroup, treat inside-drop as
+      // "reorder-to-front" — gives users a way to bring a child to first place
+      // when the target slot above sibling[0] is too narrow to hit.
+      if (activeGroup.parentId === overId) {
+        const siblings = groups.filter((g) => g.parentId === overId).sort((a, b) => a.sortIndex - b.sortIndex)
+        const oldIndex = siblings.findIndex((g) => g.id === activeId)
+        if (oldIndex <= 0) return { kind: 'noop' }
+        return { kind: 'reorder-group-in-parent', parentId: overId, oldIndex, newIndex: 0 }
+      }
       return { kind: 'reparent-group', groupId: activeId, newParentId: overId, insertIndex: undefined }
     }
 

@@ -31,8 +31,8 @@ export default function ManagerSessionPin() {
       align="center"
       gap={10}
       mx="xs"
-      px="md"
-      py="xs"
+      px="xs"
+      py={10}
       onClick={onClick}
       className={clsx(
         'cursor-pointer rounded-sm',

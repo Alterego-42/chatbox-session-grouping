@@ -321,4 +321,37 @@ describe('routeDragEnd', () => {
     })
     expect(r.kind).toBe('noop')
   })
+
+  test('child group dropped inside its own parent reorders to front', () => {
+    const nested: SessionGroup[] = [
+      group('root', 0),
+      { id: 'c1', name: 'c1', parentId: 'root', sortIndex: 0, createdAt: 0, updatedAt: 0 },
+      { id: 'c2', name: 'c2', parentId: 'root', sortIndex: 1, createdAt: 0, updatedAt: 0 },
+      { id: 'c3', name: 'c3', parentId: 'root', sortIndex: 2, createdAt: 0, updatedAt: 0 },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'c3', data: { current: { type: 'group' } } },
+      over: { id: 'root', data: { current: { type: 'group' } } },
+      overPosition: 'inside',
+      sessions: [],
+      groups: nested,
+    })
+    expect(r).toEqual({ kind: 'reorder-group-in-parent', parentId: 'root', oldIndex: 2, newIndex: 0 })
+  })
+
+  test('child group already at front noop on inside drop to its parent', () => {
+    const nested: SessionGroup[] = [
+      group('root', 0),
+      { id: 'c1', name: 'c1', parentId: 'root', sortIndex: 0, createdAt: 0, updatedAt: 0 },
+      { id: 'c2', name: 'c2', parentId: 'root', sortIndex: 1, createdAt: 0, updatedAt: 0 },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'c1', data: { current: { type: 'group' } } },
+      over: { id: 'root', data: { current: { type: 'group' } } },
+      overPosition: 'inside',
+      sessions: [],
+      groups: nested,
+    })
+    expect(r.kind).toBe('noop')
+  })
 })
