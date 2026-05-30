@@ -1,11 +1,13 @@
-import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core'
+import type { CollisionDetection, DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core'
 import {
   closestCenter,
   DndContext,
   DragOverlay,
   KeyboardSensor,
   MouseSensor,
+  pointerWithin,
   TouchSensor,
+  useDroppable,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
@@ -22,7 +24,7 @@ import { Virtuoso } from 'react-virtuoso'
 import { expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
 import { useSessionList } from '@/stores/chatStore'
 import { updateGroup, useGroups } from '@/stores/groupStore'
-import { moveSessionToGroup, reorderGroups, reorderWithinGroup } from '@/stores/sessionActions'
+import { moveSessionToGroup, reorderChildGroups, reorderGroups, reorderWithinGroup } from '@/stores/sessionActions'
 import { useUIStore } from '@/stores/uiStore'
 import { type DropPosition, routeDragEnd } from '@/utils/dnd-route'
 import { buildFlatTree, type FlatRow } from '@/utils/session-tree'
@@ -77,6 +79,15 @@ export default function SessionList(props: Props) {
 
   const activeRow = useMemo(() => (activeId ? rows.find((r) => r.id === activeId) ?? null : null), [activeId, rows])
 
+  // Custom collision detection — prefer the right-edge unnest-zone (pointer-based)
+  // so it works under restrictToVerticalAxis where the active rect can't reach the
+  // right edge. Falls back to closestCenter for normal targets.
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointerHits = pointerWithin(args).filter((c) => c.id === '__unnest_zone__')
+    if (pointerHits.length > 0) return pointerHits
+    return closestCenter(args)
+  }
+
   const toggleExpand = (key: string) => {
     setExpanded((m) => ({ ...m, [key]: m[key] === false }))
   }
@@ -98,6 +109,10 @@ export default function SessionList(props: Props) {
       return
     }
     const overType = over.data.current?.type as string | undefined
+    if (overType === 'unnest-zone') {
+      setOverInfo({ id: overId, position: 'inside' })
+      return
+    }
     const isUnassignedDroppable = overId === '__unassigned__' || overId === '__droppable_unassigned__'
     if (isUnassignedDroppable) {
       setOverInfo({ id: overId, position: 'inside' })
@@ -142,6 +157,9 @@ export default function SessionList(props: Props) {
         break
       case 'reorder-groups':
         await reorderGroups(action.oldIndex, action.newIndex)
+        break
+      case 'reorder-group-in-parent':
+        await reorderChildGroups(action.parentId, action.oldIndex, action.newIndex)
         break
       case 'reparent-group':
         await updateGroup(action.groupId, { parentId: action.newParentId })
@@ -212,7 +230,7 @@ export default function SessionList(props: Props) {
       <DndContext
         modifiers={[restrictToVerticalAxis]}
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
@@ -220,39 +238,50 @@ export default function SessionList(props: Props) {
       >
         {sortedSessions && (
           <SortableContext items={sortableIds}>
-            <Virtuoso
-              style={{ flex: 1 }}
-              data={rows}
-              computeItemKey={(_i, row) => row.id}
-              scrollerRef={(ref) => {
-                if (ref instanceof HTMLDivElement) {
-                  props.sessionListViewportRef.current = ref
-                }
+            <div
+              style={{
+                position: 'relative',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
               }}
-              itemContent={(_index, row) => {
-                if (row.kind === 'group' || row.kind === 'unassigned-root') {
+            >
+              <Virtuoso
+                style={{ flex: 1 }}
+                data={rows}
+                computeItemKey={(_i, row) => row.id}
+                scrollerRef={(ref) => {
+                  if (ref instanceof HTMLDivElement) {
+                    props.sessionListViewportRef.current = ref
+                  }
+                }}
+                itemContent={(_index, row) => {
+                  if (row.kind === 'group' || row.kind === 'unassigned-root') {
+                    return (
+                      <GroupNode
+                        row={row}
+                        onToggle={() => toggleExpand(row.id)}
+                        dropIndicator={dropIndicatorFor(row.id)}
+                      />
+                    )
+                  }
                   return (
-                    <GroupNode
-                      row={row}
-                      onToggle={() => toggleExpand(row.id)}
+                    <SortableSessionRow
+                      id={row.id}
+                      depth={row.depth}
                       dropIndicator={dropIndicatorFor(row.id)}
-                    />
+                    >
+                      <SessionItem
+                        selected={routerState.location.pathname === `/session/${row.session.id}`}
+                        session={row.session}
+                      />
+                    </SortableSessionRow>
                   )
-                }
-                return (
-                  <SortableSessionRow
-                    id={row.id}
-                    depth={row.depth}
-                    dropIndicator={dropIndicatorFor(row.id)}
-                  >
-                    <SessionItem
-                      selected={routerState.location.pathname === `/session/${row.session.id}`}
-                      session={row.session}
-                    />
-                  </SortableSessionRow>
-                )
-              }}
-            />
+                }}
+              />
+              {activeId !== null && <UnnestZone isActive={overInfo?.id === '__unnest_zone__'} />}
+            </div>
           </SortableContext>
         )}
         <DragOverlay dropAnimation={null}>
@@ -294,6 +323,33 @@ function SortableSessionRow(props: {
       {children}
       {dropIndicator === 'after' && (
         <div className="absolute left-2 right-2 bottom-0 h-[2px] bg-[var(--mantine-color-chatbox-brand-filled)] pointer-events-none z-10" />
+      )}
+    </div>
+  )
+}
+
+function UnnestZone({ isActive }: { isActive: boolean }) {
+  const { setNodeRef } = useDroppable({
+    id: '__unnest_zone__',
+    data: { type: 'unnest-zone' },
+  })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 14,
+        zIndex: 5,
+        pointerEvents: 'auto',
+      }}
+    >
+      {isActive && (
+        <div
+          className="absolute top-0 bottom-0 right-0 w-[2px] bg-[var(--mantine-color-chatbox-brand-filled)] pointer-events-none"
+        />
       )}
     </div>
   )

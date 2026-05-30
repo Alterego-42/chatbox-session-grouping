@@ -26,7 +26,7 @@ export {
   regenerateInNewFork,
 } from './session/generation'
 // Re-export group operations from session/groups.ts
-export { moveSessionToGroup, reorderGroups, reorderWithinGroup } from './session/groups'
+export { moveSessionToGroup, reorderChildGroups, reorderGroups, reorderWithinGroup } from './session/groups'
 // Re-export message operations from session/messages.ts
 export {
   insertMessage,

@@ -5,6 +5,7 @@ export type DragEndAction =
   | { kind: 'reorder-within-group'; groupId: string | null; oldIndex: number; newIndex: number }
   | { kind: 'move-session-to-group'; sessionId: string; targetGroupId: string | null; insertIndex: number | undefined }
   | { kind: 'reorder-groups'; oldIndex: number; newIndex: number }
+  | { kind: 'reorder-group-in-parent'; parentId: string; oldIndex: number; newIndex: number }
   | { kind: 'reparent-group'; groupId: string; newParentId: string | null; insertIndex: number | undefined }
 
 export type DropPosition = 'before' | 'after' | 'inside'
@@ -44,6 +45,24 @@ export function routeDragEnd({ active, over, overPosition = 'after', sessions, g
 
   const activeType = active.data?.current?.type
   const overType = over.data?.current?.type
+
+  // Right-edge unnest gesture — drag toward the right edge to un-nest a child group
+  // or move a grouped session to Unassigned.
+  if (overType === 'unnest-zone') {
+    if (activeType === 'group') {
+      const activeGroup = groups.find((g) => g.id === activeId)
+      if (!activeGroup) return { kind: 'noop' }
+      if (activeGroup.parentId === null) return { kind: 'noop' }
+      return { kind: 'reparent-group', groupId: activeId, newParentId: null, insertIndex: undefined }
+    }
+    if (activeType === 'session') {
+      const activeSession = sessions.find((s) => s.id === activeId)
+      if (!activeSession) return { kind: 'noop' }
+      if (groupKey(activeSession.groupId) === null) return { kind: 'noop' }
+      return { kind: 'move-session-to-group', sessionId: activeId, targetGroupId: null, insertIndex: undefined }
+    }
+    return { kind: 'noop' }
+  }
 
   if (activeType === 'group' && overType === 'group') {
     const activeGroup = groups.find((g) => g.id === activeId)
@@ -94,6 +113,19 @@ export function routeDragEnd({ active, over, overPosition = 'after', sessions, g
         .sort((a, b) => a.sortIndex - b.sortIndex)
       const overIndex = siblings.findIndex((g) => g.id === overId)
       if (overIndex < 0) return { kind: 'noop' }
+
+      // Same-parent sibling reorder — keep parent unchanged, reassign sortIndex within siblings.
+      if (!activeIsRoot && activeGroup.parentId === newParentId && newParentId !== null) {
+        const oldIndex = siblings.findIndex((g) => g.id === activeId)
+        if (oldIndex < 0) return { kind: 'noop' }
+        let newIndex = overPosition === 'before' ? overIndex : overIndex + 1
+        if (oldIndex < newIndex) newIndex -= 1
+        if (newIndex < 0) newIndex = 0
+        if (newIndex > siblings.length - 1) newIndex = siblings.length - 1
+        if (oldIndex === newIndex) return { kind: 'noop' }
+        return { kind: 'reorder-group-in-parent', parentId: newParentId, oldIndex, newIndex }
+      }
+
       let insertIndex = overPosition === 'before' ? overIndex : overIndex + 1
       const oldIndex = siblings.findIndex((g) => g.id === activeId)
       if (oldIndex >= 0 && oldIndex < insertIndex) insertIndex -= 1

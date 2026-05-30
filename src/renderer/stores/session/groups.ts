@@ -58,6 +58,26 @@ export async function reorderGroups(oldIndex: number, newIndex: number): Promise
   })
 }
 
+export async function reorderChildGroups(parentId: string, oldIndex: number, newIndex: number): Promise<void> {
+  await groupStore.updateGroupList((groups) => {
+    const existing = groups ?? []
+    const siblings = existing.filter((g) => g.parentId === parentId).sort((a, b) => a.sortIndex - b.sortIndex)
+    if (oldIndex < 0 || newIndex < 0 || oldIndex >= siblings.length || newIndex >= siblings.length) {
+      return existing
+    }
+    if (oldIndex === newIndex) return existing
+    const reordered = arrayMove(siblings, oldIndex, newIndex)
+    const newSortIndex = new Map<string, number>()
+    reordered.forEach((g, i) => {
+      newSortIndex.set(g.id, i)
+    })
+    const now = Date.now()
+    return existing.map((g) =>
+      newSortIndex.has(g.id) ? { ...g, sortIndex: newSortIndex.get(g.id) ?? g.sortIndex, updatedAt: now } : g
+    )
+  })
+}
+
 export async function duplicateGroup(groupId: string): Promise<SessionGroup> {
   const allGroups = await groupStore.listGroups()
   const source = allGroups.find((g) => g.id === groupId)
