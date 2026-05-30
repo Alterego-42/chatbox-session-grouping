@@ -563,6 +563,37 @@ function cleanupEmptyForkBranches(
   return { messages: resultMessages, messageForksHash: resultHash }
 }
 
+// MARK: system-managed sessions
+
+// Ensure the persistent system-managed AI Manager session exists.
+// Idempotent: parallel/repeat invocations always yield exactly one stored session
+// (storage.setItemNow overwrites the same key; updateSessionList dedupes by id).
+// We read directly from storage rather than via getSession() to bypass the
+// react-query cache, which keeps `null` results around indefinitely (staleTime: Infinity).
+export async function ensureManagerSession(): Promise<void> {
+  const storageKey = StorageKeyGenerator.session(defaults.SESSION_MANAGER_ID)
+  const existing = await storage.getItem<Session | null>(storageKey, null)
+  if (existing) {
+    return
+  }
+  const session: Session = {
+    id: defaults.SESSION_MANAGER_ID,
+    name: 'AI Manager',
+    type: 'chat',
+    system: true,
+    messages: [],
+    settings: {},
+  }
+  await storage.setItemNow(storageKey, session)
+  await updateSessionList((sessions) => {
+    const list = sessions ?? []
+    if (list.some((s) => s.id === defaults.SESSION_MANAGER_ID)) {
+      return list
+    }
+    return [...list, getSessionMeta(session)]
+  })
+}
+
 // MARK: data recovery operations
 
 /**

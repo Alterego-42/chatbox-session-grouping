@@ -37,6 +37,7 @@ import './setup/ga_init'
 // 引入保护代码
 import './setup/protect'
 import { QueryClientProvider } from '@tanstack/react-query'
+import { ensureManagerSession } from './stores/chatStore'
 import { initLastUsedModelStore } from './stores/lastUsedModelStore'
 import { initSettingsStore } from './stores/settingsStore'
 
@@ -63,6 +64,15 @@ async function initializeApp() {
     log.info('migrate done')
   } catch (e) {
     log.error('migrate error', e)
+    Sentry.captureException(e as Error)
+  }
+
+  // Ensure the persistent system-managed AI Manager session exists post-migration.
+  // Idempotent — safe to call on every launch.
+  try {
+    await ensureManagerSession()
+  } catch (e) {
+    log.error('ensureManagerSession error', e)
     Sentry.captureException(e as Error)
   }
 

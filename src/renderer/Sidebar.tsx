@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import Divider from './components/common/Divider'
 import { ScalableIcon } from './components/common/ScalableIcon'
 import ThemeSwitchButton from './components/dev/ThemeSwitchButton'
+import ManagerSessionPin from './components/session/ManagerSessionPin'
 import SessionList from './components/session/SessionList'
 import TaskSessionList from './components/session/TaskSessionList'
 import { FORCE_ENABLE_DEV_PAGES } from './dev/devToolsConfig'
@@ -216,6 +217,13 @@ export default function Sidebar() {
           <TaskSessionList />
         ) : (
           <SessionList sessionListViewportRef={sessionListViewportRef} />
+        )}
+
+        {sidebarMode !== 'task' && (
+          <Stack gap={4} px={0} pt="xs">
+            <Divider />
+            <ManagerSessionPin />
+          </Stack>
         )}
 
         <Stack gap={0} px="xs" pb="xs">
