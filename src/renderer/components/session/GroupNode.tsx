@@ -1,3 +1,5 @@
+import { useDroppable } from '@dnd-kit/core'
+import { useSortable } from '@dnd-kit/sortable'
 import { ActionIcon, Flex, Text, TextInput } from '@mantine/core'
 import {
   IconChevronDown,
@@ -9,6 +11,7 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react'
+import clsx from 'clsx'
 import { type KeyboardEvent, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import ActionMenu, { type ActionMenuItemProps } from '@/components/ActionMenu'
@@ -19,9 +22,59 @@ import type { FlatRow } from '@/utils/session-tree'
 export interface GroupNodeProps {
   row: Extract<FlatRow, { kind: 'group' } | { kind: 'unassigned-root' }>
   onToggle: () => void
+  isOverlay?: boolean
+  dropIndicator?: 'before' | 'after' | 'inside' | null
 }
 
-export default function GroupNode({ row, onToggle }: GroupNodeProps) {
+export default function GroupNode({ row, onToggle, isOverlay = false, dropIndicator = null }: GroupNodeProps) {
+  const isUnassignedRow = row.kind === 'unassigned-root'
+  const dropId = isUnassignedRow ? '__droppable_unassigned__' : `__droppable_group_${row.id}`
+  const groupIdForData = isUnassignedRow ? null : row.group.id
+
+  // Hooks must always run in the same order; `disabled` differentiates roles.
+  const droppable = useDroppable({
+    id: dropId,
+    disabled: !isUnassignedRow || isOverlay,
+    data: { type: 'group', groupId: null as string | null },
+  })
+  const sortable = useSortable({
+    id: row.id,
+    disabled: isUnassignedRow || isOverlay,
+    data: { type: 'group', groupId: groupIdForData },
+  })
+
+  const setNodeRef = isOverlay ? () => {} : isUnassignedRow ? droppable.setNodeRef : sortable.setNodeRef
+  const dragAttributes = isUnassignedRow || isOverlay ? {} : sortable.attributes
+  const dragListeners = isUnassignedRow || isOverlay ? {} : (sortable.listeners ?? {})
+
+  return (
+    <GroupNodeInner
+      row={row}
+      onToggle={onToggle}
+      setNodeRef={setNodeRef}
+      dragAttributes={dragAttributes}
+      dragListeners={dragListeners}
+      isOverlay={isOverlay}
+      dropIndicator={isOverlay ? null : dropIndicator}
+    />
+  )
+}
+
+interface InnerProps extends GroupNodeProps {
+  setNodeRef: (el: HTMLElement | null) => void
+  dragAttributes: Record<string, unknown>
+  dragListeners: Record<string, unknown>
+}
+
+function GroupNodeInner({
+  row,
+  onToggle,
+  setNodeRef,
+  dragAttributes,
+  dragListeners,
+  isOverlay,
+  dropIndicator,
+}: InnerProps) {
   const { t } = useTranslation()
   const isUnassigned = row.kind === 'unassigned-root'
   const [renaming, setRenaming] = useState(false)
@@ -99,16 +152,29 @@ export default function GroupNode({ row, onToggle }: GroupNodeProps) {
   )
 
   return (
-    <Flex
-      align="center"
-      gap={6}
-      mx="xs"
-      px="xs"
-      py={6}
-      className="cursor-pointer rounded-sm group/group-node hover:bg-chatbox-background-gray-secondary"
-      style={{ paddingLeft: row.depth * 12 + 8 }}
-      onClick={onToggle}
-    >
+    <div className="relative">
+      {dropIndicator === 'before' && (
+        <div className="absolute left-2 right-2 top-0 h-[2px] bg-[var(--mantine-color-chatbox-brand-filled)] pointer-events-none z-10" />
+      )}
+      <Flex
+        ref={setNodeRef}
+        align="center"
+        gap={6}
+        mx="xs"
+        px="xs"
+        py={6}
+        className={clsx(
+          'cursor-pointer rounded-sm group/group-node',
+          dropIndicator === 'inside'
+            ? 'bg-chatbox-background-brand-secondary'
+            : 'hover:bg-chatbox-background-gray-secondary',
+          isOverlay && 'shadow-md opacity-90 bg-chatbox-background-primary'
+        )}
+        style={{ paddingLeft: row.depth * 12 + 8 }}
+        onClick={onToggle}
+        {...dragAttributes}
+        {...dragListeners}
+      >
       <ActionIcon
         variant="transparent"
         size={18}
@@ -178,5 +244,9 @@ export default function GroupNode({ row, onToggle }: GroupNodeProps) {
         </>
       )}
     </Flex>
+      {dropIndicator === 'after' && (
+        <div className="absolute left-2 right-2 bottom-0 h-[2px] bg-[var(--mantine-color-chatbox-brand-filled)] pointer-events-none z-10" />
+      )}
+    </div>
   )
 }

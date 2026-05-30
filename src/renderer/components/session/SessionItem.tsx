@@ -21,10 +21,11 @@ import { ScalableIcon } from '../common/ScalableIcon'
 export interface Props {
   session: SessionMeta
   selected: boolean
+  isOverlay?: boolean
 }
 
 function SessionItem(props: Props) {
-  const { session, selected } = props
+  const { session, selected, isOverlay = false } = props
   const { t } = useTranslation()
   const setShowSidebar = useUIStore((s) => s.setShowSidebar)
   const onClick = () => {
@@ -112,7 +113,8 @@ function SessionItem(props: Props) {
           ? ''
           : selected
             ? 'bg-chatbox-background-brand-secondary'
-            : 'hover:bg-chatbox-background-gray-secondary'
+            : 'hover:bg-chatbox-background-gray-secondary',
+        isOverlay && 'shadow-md opacity-90 bg-chatbox-background-primary'
       )}
       mx="xs"
       px="xs"
