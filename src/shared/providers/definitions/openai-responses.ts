@@ -66,7 +66,12 @@ export const openaiResponsesProvider = defineProvider({
           ? config.providerSetting.models || openaiResponsesProvider.defaultSettings?.models
           : undefined,
         skipRemoteModelList: isOAuth,
-        forceStatelessResponses: isOAuth,
+        // Always stateless: we don't track previous_response_id, and ai-sdk's
+        // tool-call → function_call conversion drops the itemId required for
+        // store=true round-trips (see node_modules/@ai-sdk/openai/dist/index.mjs:2653).
+        // Sending function_call_output in store=true mode without an item_reference
+        // yields "function_call_output requires item_reference ids matching each call_id".
+        forceStatelessResponses: true,
       },
       config.dependencies
     )
