@@ -195,4 +195,28 @@ describe('buildFlatTree', () => {
       { id: 'group:b1', depth: 1 },
     ])
   })
+
+  it('child depth survives a parent collapse + expand cycle', () => {
+    const groups = [
+      group({ id: 'group:p', sortIndex: 0 }),
+      group({ id: 'group:c', parentId: 'group:p', sortIndex: 0 }),
+    ]
+    const sessions = [meta({ id: 'sc', groupId: 'group:c' })]
+
+    // initial render — expanded by default
+    const initial = buildFlatTree(groups, sessions, {})
+    const initialChild = initial.find((r) => r.id === 'group:c')
+    expect(initialChild).toMatchObject({ kind: 'group', depth: 1 })
+
+    // collapse parent
+    const collapsed = buildFlatTree(groups, sessions, { 'group:p': false })
+    expect(collapsed.find((r) => r.id === 'group:c')).toBeUndefined()
+
+    // re-expand parent — child must still be at depth 1
+    const reExpanded = buildFlatTree(groups, sessions, { 'group:p': true })
+    const reExpandedChild = reExpanded.find((r) => r.id === 'group:c')
+    expect(reExpandedChild).toMatchObject({ kind: 'group', depth: 1 })
+    const reExpandedSession = reExpanded.find((r) => r.id === 'sc')
+    expect(reExpandedSession).toMatchObject({ kind: 'session', depth: 2 })
+  })
 })

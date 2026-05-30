@@ -236,4 +236,89 @@ describe('routeDragEnd', () => {
     })
     expect(r.kind).toBe('noop')
   })
+
+  test('child onto sibling child reorders within parent (before)', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('root', 0),
+      { ...group('a1', 0), parentId: 'root' },
+      { ...group('a2', 1), parentId: 'root' },
+      { ...group('a3', 2), parentId: 'root' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'a3', data: { current: { type: 'group', groupId: 'a3' } } },
+      over: { id: 'a1', data: { current: { type: 'group', groupId: 'a1' } } },
+      overPosition: 'before',
+      sessions: [],
+      groups: nestedGroups,
+    })
+    // siblings sorted = [a1, a2, a3]; a3 (oldIndex 2) before a1 (overIndex 0) -> newIndex 0
+    expect(r).toEqual({ kind: 'reorder-group-in-parent', parentId: 'root', oldIndex: 2, newIndex: 0 })
+  })
+
+  test('child onto sibling child reorders within parent (after, compensated)', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('root', 0),
+      { ...group('a1', 0), parentId: 'root' },
+      { ...group('a2', 1), parentId: 'root' },
+      { ...group('a3', 2), parentId: 'root' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'a1', data: { current: { type: 'group', groupId: 'a1' } } },
+      over: { id: 'a2', data: { current: { type: 'group', groupId: 'a2' } } },
+      overPosition: 'after',
+      sessions: [],
+      groups: nestedGroups,
+    })
+    // a1 (oldIndex 0) after a2 (overIndex 1) -> raw newIndex = 2; oldIndex < newIndex -> -1 -> 1
+    expect(r).toEqual({ kind: 'reorder-group-in-parent', parentId: 'root', oldIndex: 0, newIndex: 1 })
+  })
+
+  test('child group on unnest-zone reparents to null', () => {
+    const nestedGroups: SessionGroup[] = [
+      group('g1', 0),
+      { ...group('c1', 1), parentId: 'g1' },
+    ]
+    const r = routeDragEnd({
+      active: { id: 'c1', data: { current: { type: 'group', groupId: 'c1' } } },
+      over: { id: '__unnest_zone__', data: { current: { type: 'unnest-zone' } } },
+      sessions: [],
+      groups: nestedGroups,
+    })
+    expect(r).toEqual({ kind: 'reparent-group', groupId: 'c1', newParentId: null, insertIndex: undefined })
+  })
+
+  test('root group on unnest-zone is a noop', () => {
+    const r = routeDragEnd({
+      active: { id: 'g1', data: { current: { type: 'group', groupId: 'g1' } } },
+      over: { id: '__unnest_zone__', data: { current: { type: 'unnest-zone' } } },
+      sessions,
+      groups,
+    })
+    expect(r.kind).toBe('noop')
+  })
+
+  test('session in group on unnest-zone moves to Unassigned', () => {
+    const r = routeDragEnd({
+      active: { id: 's1a', data: { current: { type: 'session' } } },
+      over: { id: '__unnest_zone__', data: { current: { type: 'unnest-zone' } } },
+      sessions,
+      groups,
+    })
+    expect(r).toEqual({
+      kind: 'move-session-to-group',
+      sessionId: 's1a',
+      targetGroupId: null,
+      insertIndex: undefined,
+    })
+  })
+
+  test('unassigned session on unnest-zone is a noop', () => {
+    const r = routeDragEnd({
+      active: { id: 'su1', data: { current: { type: 'session' } } },
+      over: { id: '__unnest_zone__', data: { current: { type: 'unnest-zone' } } },
+      sessions,
+      groups,
+    })
+    expect(r.kind).toBe('noop')
+  })
 })

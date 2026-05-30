@@ -209,6 +209,44 @@ describe('session/groups', () => {
     expect(sorted.map((g) => g.sortIndex)).toEqual([0, 1, 2])
   })
 
+  it('reorderChildGroups only renumbers siblings sharing the parent, leaves others alone', async () => {
+    const mod = await importFresh()
+    storageState.groups = [
+      { id: 'group:root', name: 'root', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 },
+      { id: 'group:other', name: 'other', parentId: null, sortIndex: 1, createdAt: 2, updatedAt: 2 },
+      { id: 'group:c1', name: 'c1', parentId: 'group:root', sortIndex: 0, createdAt: 3, updatedAt: 3 },
+      { id: 'group:c2', name: 'c2', parentId: 'group:root', sortIndex: 1, createdAt: 4, updatedAt: 4 },
+      { id: 'group:c3', name: 'c3', parentId: 'group:root', sortIndex: 2, createdAt: 5, updatedAt: 5 },
+      { id: 'group:x1', name: 'x1', parentId: 'group:other', sortIndex: 0, createdAt: 6, updatedAt: 6 },
+    ]
+    // move c3 (sibling-index 2) to index 0 -> [c3, c1, c2]
+    await mod.reorderChildGroups('group:root', 2, 0)
+    const childrenOfRoot = storageState.groups
+      .filter((g) => g.parentId === 'group:root')
+      .sort((a, b) => a.sortIndex - b.sortIndex)
+    expect(childrenOfRoot.map((g) => g.id)).toEqual(['group:c3', 'group:c1', 'group:c2'])
+    expect(childrenOfRoot.map((g) => g.sortIndex)).toEqual([0, 1, 2])
+    // unrelated groups untouched
+    expect(storageState.groups.find((g) => g.id === 'group:other')?.sortIndex).toBe(1)
+    expect(storageState.groups.find((g) => g.id === 'group:x1')?.sortIndex).toBe(0)
+  })
+
+  it('reorderChildGroups is a no-op when oldIndex === newIndex or out of range', async () => {
+    const mod = await importFresh()
+    storageState.groups = [
+      { id: 'group:root', name: 'root', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 },
+      { id: 'group:c1', name: 'c1', parentId: 'group:root', sortIndex: 0, createdAt: 2, updatedAt: 2 },
+      { id: 'group:c2', name: 'c2', parentId: 'group:root', sortIndex: 1, createdAt: 3, updatedAt: 3 },
+    ]
+    const updatedAtBefore = storageState.groups.find((g) => g.id === 'group:c1')?.updatedAt
+    await mod.reorderChildGroups('group:root', 0, 0)
+    await mod.reorderChildGroups('group:root', -1, 1)
+    await mod.reorderChildGroups('group:root', 0, 99)
+    expect(storageState.groups.find((g) => g.id === 'group:c1')?.updatedAt).toBe(updatedAtBefore)
+    expect(storageState.groups.find((g) => g.id === 'group:c1')?.sortIndex).toBe(0)
+    expect(storageState.groups.find((g) => g.id === 'group:c2')?.sortIndex).toBe(1)
+  })
+
   it('duplicateGroup on a leaf root with 2 sessions creates 1 group + 2 sessions', async () => {
     const mod = await importFresh()
     storageState.groups = [
