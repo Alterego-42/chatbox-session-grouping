@@ -4,12 +4,19 @@ import * as chatStore from '@/stores/chatStore'
 import * as groupStore from '@/stores/groupStore'
 import { applyProposal, noOpStrategy, type OrganizeProposal } from '@/stores/session/auto-organize'
 import { duplicateGroup } from '@/stores/session/groups'
+import { generateSessionSummary, getSessionSummary } from '@/stores/session/summary'
 import { _copySession, moveSessionToGroup, reorderGroups } from '@/stores/sessionActions'
+import { getMessageText } from '../../../../shared/utils/message'
 
 const toolSetDescription = `
 Use these tools to organize the user's chat sidebar: list sessions/groups, move/rename/delete/duplicate them,
 manage groups (including color, parent, and reordering), and propose auto-organization. Destructive operations
 require user confirmation.
+
+Prefer the bulk_* tools whenever you need to act on more than one session/group — calling per-item tools in
+sequence is slow and noisy. To decide what to do with each session, use get_session_summary or
+bulk_get_summaries (cached, generates on demand) before moving them; fall back to get_session_messages only
+when summaries are inadequate.
 `
 
 export interface ConfirmDangerousActionInput {
@@ -271,6 +278,154 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
     },
   })
 
+  const bulk_rename_sessions = tool({
+    description:
+      'Rename many sessions in one call. Each item is { sessionId, newName }. Returns per-item ok/error.',
+    inputSchema: z.object({
+      items: z.array(z.object({ sessionId: z.string(), newName: z.string().min(1) })).min(1),
+    }),
+    execute: async (input: { items: Array<{ sessionId: string; newName: string }> }) => {
+      const ok: string[] = []
+      const failed: Array<{ sessionId: string; error: string }> = []
+      for (const item of input.items) {
+        try {
+          const session = await chatStore.getSession(item.sessionId)
+          if (!session) {
+            failed.push({ sessionId: item.sessionId, error: 'session not found' })
+            continue
+          }
+          await chatStore.updateSession(item.sessionId, (s) => {
+            if (!s) throw new Error('session not found')
+            return { ...s, name: item.newName }
+          })
+          ok.push(item.sessionId)
+        } catch (err) {
+          failed.push({ sessionId: item.sessionId, error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+      return { ok: failed.length === 0, renamed: ok, failed }
+    },
+  })
+
+  const bulk_delete_sessions = tool({
+    description:
+      'Permanently delete many sessions in one call. Single confirmation covers the whole batch. Requires user confirmation.',
+    inputSchema: z.object({ sessionIds: z.array(z.string()).min(1) }),
+    execute: async (input: { sessionIds: string[] }) => {
+      const sessions = await loadVisibleSessions()
+      const targets = input.sessionIds
+        .map((id) => sessions.find((s) => s.id === id))
+        .filter((s): s is (typeof sessions)[number] => Boolean(s))
+      if (targets.length === 0) return { ok: false, error: 'no matching sessions' }
+      const preview = targets
+        .slice(0, 6)
+        .map((s) => `"${s.name}"`)
+        .join(', ')
+      const more = targets.length > 6 ? ` and ${targets.length - 6} more` : ''
+      const ok = await confirmDangerous({
+        type: 'bulk_delete_sessions',
+        description: `Delete ${targets.length} session(s): ${preview}${more}? This cannot be undone.`,
+      })
+      if (!ok) return declined
+      const deleted: string[] = []
+      const failed: Array<{ sessionId: string; error: string }> = []
+      for (const s of targets) {
+        try {
+          await chatStore.deleteSession(s.id)
+          deleted.push(s.id)
+        } catch (err) {
+          failed.push({ sessionId: s.id, error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+      return { ok: failed.length === 0, deleted, failed }
+    },
+  })
+
+  const bulk_update_groups = tool({
+    description:
+      'Update many groups in one call. Each item is { groupId, name?, color?, parentId? } — pass only fields you want to change. parentId=null un-nests; color="" or null clears.',
+    inputSchema: z.object({
+      items: z
+        .array(
+          z.object({
+            groupId: z.string(),
+            name: z.string().min(1).optional(),
+            color: z.string().nullable().optional(),
+            parentId: z.string().nullable().optional(),
+          })
+        )
+        .min(1),
+    }),
+    execute: async (input: {
+      items: Array<{
+        groupId: string
+        name?: string
+        color?: string | null
+        parentId?: string | null
+      }>
+    }) => {
+      const groups = await groupStore.listGroups()
+      const updated: string[] = []
+      const failed: Array<{ groupId: string; error: string }> = []
+      for (const item of input.items) {
+        if (!groups.find((g) => g.id === item.groupId)) {
+          failed.push({ groupId: item.groupId, error: 'group not found' })
+          continue
+        }
+        const patch: { name?: string; color?: string | undefined; parentId?: string | null } = {}
+        if (item.name !== undefined) patch.name = item.name
+        if (item.color !== undefined) patch.color = item.color ? item.color : undefined
+        if (item.parentId !== undefined) patch.parentId = item.parentId
+        if (Object.keys(patch).length === 0) {
+          failed.push({ groupId: item.groupId, error: 'no fields to update' })
+          continue
+        }
+        try {
+          await groupStore.updateGroup(item.groupId, patch)
+          updated.push(item.groupId)
+        } catch (err) {
+          failed.push({ groupId: item.groupId, error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+      return { ok: failed.length === 0, updated, failed }
+    },
+  })
+
+  const bulk_create_groups = tool({
+    description:
+      'Create many groups in one call. Each item is { name, parentId?, color? }. Returns the new group ids in input order so the caller can chain them with bulk_move/bulk_update_groups.',
+    inputSchema: z.object({
+      items: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            parentId: z.string().nullable().optional(),
+            color: z.string().optional(),
+          })
+        )
+        .min(1),
+    }),
+    execute: async (input: {
+      items: Array<{ name: string; parentId?: string | null; color?: string }>
+    }) => {
+      const created: Array<{ name: string; group: Awaited<ReturnType<typeof groupStore.createGroup>> }> = []
+      const failed: Array<{ name: string; error: string }> = []
+      for (const item of input.items) {
+        try {
+          const g = await groupStore.createGroup({
+            name: item.name,
+            parentId: item.parentId ?? null,
+            color: item.color,
+          })
+          created.push({ name: item.name, group: g })
+        } catch (err) {
+          failed.push({ name: item.name, error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+      return { ok: failed.length === 0, created, failed }
+    },
+  })
+
   const apply_organize_proposal = tool({
     description: 'Apply an auto-organize proposal: create new groups and move sessions. Requires user confirmation.',
     inputSchema: z.object({
@@ -317,6 +472,135 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
     },
   })
 
+  const get_session_summary = tool({
+    description:
+      'Read a cached session summary, generating one on demand if missing or stale. Use this (and bulk_get_summaries) to decide where a session should go before moving it.',
+    inputSchema: z.object({
+      sessionId: z.string(),
+      forceRegenerate: z.boolean().optional().describe('Regenerate even if a fresh cached summary exists.'),
+    }),
+    execute: async (input: { sessionId: string; forceRegenerate?: boolean }) => {
+      const session = await chatStore.getSession(input.sessionId)
+      if (!session) return { ok: false, error: 'session not found' }
+      try {
+        const read = await getSessionSummary(input.sessionId)
+        if (read.cached && !read.stale && !input.forceRegenerate) {
+          return {
+            ok: true,
+            sessionId: input.sessionId,
+            summary: read.cached.content,
+            cached: true,
+            stale: false,
+            generatedAt: read.cached.generatedAt,
+          }
+        }
+        const fresh = await generateSessionSummary(input.sessionId)
+        return {
+          ok: true,
+          sessionId: input.sessionId,
+          summary: fresh.content,
+          cached: false,
+          stale: false,
+          generatedAt: fresh.generatedAt,
+        }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  })
+
+  const get_session_messages = tool({
+    description:
+      'Read the last N messages of a session as plain text — fallback when summaries are inadequate. Defaults to 5 messages, max 20. Returns truncated text per message (system messages skipped).',
+    inputSchema: z.object({
+      sessionId: z.string(),
+      limit: z.number().int().min(1).max(20).optional(),
+      perMessageCharLimit: z.number().int().min(50).max(4000).optional(),
+    }),
+    execute: async (input: { sessionId: string; limit?: number; perMessageCharLimit?: number }) => {
+      const session = await chatStore.getSession(input.sessionId)
+      if (!session) return { ok: false, error: 'session not found' }
+      const limit = input.limit ?? 5
+      const charLimit = input.perMessageCharLimit ?? 800
+      const visible = session.messages.filter((m) => m.role !== 'system')
+      const tail = visible.slice(-limit)
+      const messages = tail.map((m) => {
+        const text = getMessageText(m, false, false)
+        return {
+          role: m.role,
+          text: text.length > charLimit ? `${text.slice(0, charLimit)}…` : text,
+          truncated: text.length > charLimit,
+        }
+      })
+      return {
+        ok: true,
+        sessionId: input.sessionId,
+        sessionName: session.name,
+        totalVisibleMessages: visible.length,
+        returned: messages.length,
+        messages,
+      }
+    },
+  })
+
+  const bulk_get_summaries = tool({
+    description:
+      'Read or generate summaries for many sessions at once. Cap of 10 per call — split larger batches yourself. Returns per-session ok/error.',
+    inputSchema: z.object({
+      sessionIds: z.array(z.string()).min(1).max(10),
+      forceRegenerate: z.boolean().optional(),
+    }),
+    execute: async (input: { sessionIds: string[]; forceRegenerate?: boolean }) => {
+      const results: Array<{
+        sessionId: string
+        ok: boolean
+        summary?: string
+        cached?: boolean
+        stale?: boolean
+        generatedAt?: number
+        error?: string
+      }> = []
+      for (const id of input.sessionIds) {
+        const session = await chatStore.getSession(id)
+        if (!session) {
+          results.push({ sessionId: id, ok: false, error: 'session not found' })
+          continue
+        }
+        try {
+          const read = await getSessionSummary(id)
+          if (read.cached && !read.stale && !input.forceRegenerate) {
+            results.push({
+              sessionId: id,
+              ok: true,
+              summary: read.cached.content,
+              cached: true,
+              stale: false,
+              generatedAt: read.cached.generatedAt,
+            })
+            continue
+          }
+          const fresh = await generateSessionSummary(id)
+          results.push({
+            sessionId: id,
+            ok: true,
+            summary: fresh.content,
+            cached: false,
+            stale: false,
+            generatedAt: fresh.generatedAt,
+          })
+        } catch (err) {
+          results.push({
+            sessionId: id,
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      const okCount = results.filter((r) => r.ok).length
+      return { ok: okCount === results.length, total: results.length, okCount, results }
+    },
+  })
+
   return {
     description: toolSetDescription,
     tools: {
@@ -332,6 +616,13 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       set_group_color,
       set_group_parent,
       bulk_move,
+      bulk_rename_sessions,
+      bulk_delete_sessions,
+      bulk_update_groups,
+      bulk_create_groups,
+      get_session_summary,
+      get_session_messages,
+      bulk_get_summaries,
       delete_session,
       delete_group,
       apply_organize_proposal,
