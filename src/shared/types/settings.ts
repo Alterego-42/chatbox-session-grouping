@@ -343,6 +343,10 @@ export const SettingsSchema = GlobalSessionSettingsSchema.extend({
   // built-in default exported from src/renderer/stores/session/summary.ts.
   defaultSessionSummaryPrompt: z.string().optional().catch(undefined),
 
+  // How many session summaries the AI-manager `bulk_get_summaries` tool generates
+  // in parallel. On repeated failures it falls back 10 -> 3 -> 1. Default 10 when unset.
+  summaryConcurrency: z.number().int().min(1).max(50).optional().catch(undefined),
+
   // chatboxai
   licenseKey: z.string().optional(),
   licenseInstances: z.record(z.string(), z.string()).optional().catch(undefined),

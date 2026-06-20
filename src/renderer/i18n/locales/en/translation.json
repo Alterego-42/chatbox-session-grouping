@@ -1021,5 +1021,7 @@
   "{{count}} conversations selected": "{{count}} conversations selected",
   "No conversations to select": "No conversations to select",
   "Default Summary Model": "Default Summary Model",
-  "Chatbox will use this model to generate session summaries.": "Chatbox will use this model to generate session summaries."
+  "Chatbox will use this model to generate session summaries.": "Chatbox will use this model to generate session summaries.",
+  "Summary Concurrency": "Summary Concurrency",
+  "How many session summaries the AI manager generates in parallel. On repeated failures it automatically falls back to 3, then 1.": "How many session summaries the AI manager generates in parallel. On repeated failures it automatically falls back to 3, then 1."
 }

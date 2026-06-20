@@ -1,11 +1,13 @@
-import { tool, type ToolSet } from 'ai'
+import { type ToolSet, tool } from 'ai'
 import z from 'zod'
+import { type AttemptResult, concurrencyLadder, runWithConcurrencyFallback } from '@/lib/concurrency'
 import * as chatStore from '@/stores/chatStore'
 import * as groupStore from '@/stores/groupStore'
 import { applyProposal, noOpStrategy, type OrganizeProposal } from '@/stores/session/auto-organize'
 import { duplicateGroup } from '@/stores/session/groups'
 import { generateSessionSummary, getSessionSummary } from '@/stores/session/summary'
 import { _copySession, moveSessionToGroup, reorderGroups } from '@/stores/sessionActions'
+import { settingsStore } from '@/stores/settingsStore'
 import { getMessageText } from '../../../../shared/utils/message'
 
 const toolSetDescription = `
@@ -31,6 +33,28 @@ const declined = { skipped: true as const, reason: 'user_declined' as const }
 async function loadVisibleSessions() {
   const list = await chatStore.listSessionsMeta()
   return list.filter((s) => !s.system)
+}
+
+type SummaryPayload = { summary: string; cached: boolean; stale: false; generatedAt: number }
+
+// Read a cached summary (when fresh) or generate one. Resolves (never throws) to an AttemptResult
+// so the concurrency-fallback runner can retry only the failed sessions at a lower concurrency.
+async function summarizeSession(sessionId: string, forceRegenerate?: boolean): Promise<AttemptResult<SummaryPayload>> {
+  const session = await chatStore.getSession(sessionId)
+  if (!session) return { ok: false, error: 'session not found' }
+  try {
+    const read = await getSessionSummary(sessionId)
+    if (read.cached && !read.stale && !forceRegenerate) {
+      return {
+        ok: true,
+        result: { summary: read.cached.content, cached: true, stale: false, generatedAt: read.cached.generatedAt },
+      }
+    }
+    const fresh = await generateSessionSummary(sessionId)
+    return { ok: true, result: { summary: fresh.content, cached: false, stale: false, generatedAt: fresh.generatedAt } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDangerousFn }): {
@@ -279,8 +303,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
   })
 
   const bulk_rename_sessions = tool({
-    description:
-      'Rename many sessions in one call. Each item is { sessionId, newName }. Returns per-item ok/error.',
+    description: 'Rename many sessions in one call. Each item is { sessionId, newName }. Returns per-item ok/error.',
     inputSchema: z.object({
       items: z.array(z.object({ sessionId: z.string(), newName: z.string().min(1) })).min(1),
     }),
@@ -405,9 +428,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
         )
         .min(1),
     }),
-    execute: async (input: {
-      items: Array<{ name: string; parentId?: string | null; color?: string }>
-    }) => {
+    execute: async (input: { items: Array<{ name: string; parentId?: string | null; color?: string }> }) => {
       const created: Array<{ name: string; group: Awaited<ReturnType<typeof groupStore.createGroup>> }> = []
       const failed: Array<{ name: string; error: string }> = []
       for (const item of input.items) {
@@ -545,59 +566,34 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
 
   const bulk_get_summaries = tool({
     description:
-      'Read or generate summaries for many sessions at once. Cap of 10 per call — split larger batches yourself. Returns per-session ok/error.',
+      'Read or generate summaries for many sessions at once. Runs in parallel (configurable via ' +
+      'Settings → Default Models → Summary Concurrency, default 10) and auto-falls back 10 → 3 → 1 on ' +
+      'repeated failures, keeping partial successes. Returns per-session ok/error. Prefer this over ' +
+      'calling get_session_summary in a loop.',
     inputSchema: z.object({
-      sessionIds: z.array(z.string()).min(1).max(10),
+      sessionIds: z.array(z.string()).min(1).max(100),
       forceRegenerate: z.boolean().optional(),
     }),
     execute: async (input: { sessionIds: string[]; forceRegenerate?: boolean }) => {
-      const results: Array<{
-        sessionId: string
-        ok: boolean
-        summary?: string
-        cached?: boolean
-        stale?: boolean
-        generatedAt?: number
-        error?: string
-      }> = []
-      for (const id of input.sessionIds) {
-        const session = await chatStore.getSession(id)
-        if (!session) {
-          results.push({ sessionId: id, ok: false, error: 'session not found' })
-          continue
-        }
-        try {
-          const read = await getSessionSummary(id)
-          if (read.cached && !read.stale && !input.forceRegenerate) {
-            results.push({
-              sessionId: id,
+      const configured = settingsStore.getState().getSettings().summaryConcurrency ?? 10
+      const ladder = concurrencyLadder(configured)
+      const attempts = await runWithConcurrencyFallback(input.sessionIds, ladder, (id) =>
+        summarizeSession(id, input.forceRegenerate)
+      )
+      const results = attempts.map((a) =>
+        a.ok && a.result
+          ? {
+              sessionId: a.id,
               ok: true,
-              summary: read.cached.content,
-              cached: true,
-              stale: false,
-              generatedAt: read.cached.generatedAt,
-            })
-            continue
-          }
-          const fresh = await generateSessionSummary(id)
-          results.push({
-            sessionId: id,
-            ok: true,
-            summary: fresh.content,
-            cached: false,
-            stale: false,
-            generatedAt: fresh.generatedAt,
-          })
-        } catch (err) {
-          results.push({
-            sessionId: id,
-            ok: false,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        }
-      }
+              summary: a.result.summary,
+              cached: a.result.cached,
+              stale: a.result.stale,
+              generatedAt: a.result.generatedAt,
+            }
+          : { sessionId: a.id, ok: false, error: a.error }
+      )
       const okCount = results.filter((r) => r.ok).length
-      return { ok: okCount === results.length, total: results.length, okCount, results }
+      return { ok: okCount === results.length, total: results.length, okCount, concurrency: ladder, results }
     },
   })
 
