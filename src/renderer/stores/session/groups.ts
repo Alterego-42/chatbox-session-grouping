@@ -1,5 +1,5 @@
 import { arrayMove } from '@dnd-kit/sortable'
-import type { SessionGroup, SessionMeta } from '@shared/types'
+import type { SessionGroup } from '@shared/types'
 import * as chatStore from '../chatStore'
 import * as groupStore from '../groupStore'
 import { _copySession as copySession } from './crud'
@@ -24,29 +24,23 @@ export async function moveSessionToGroup(
 }
 
 export async function reorderWithinGroup(groupId: string | null, oldIndex: number, newIndex: number): Promise<void> {
-  await chatStore.updateSessionList((sessions) => {
-    const list = sessions ?? []
-    const inGroup: SessionMeta[] = []
-    for (const s of list) {
-      if (groupKey(s.groupId) === groupId) {
-        inGroup.push(s)
-      }
-    }
-    inGroup.sort((a, b) => {
+  const inGroup = (await chatStore.listSessionsMeta())
+    .filter((s) => groupKey(s.groupId) === groupId)
+    .sort((a, b) => {
       const ai = a.sortIndex ?? Number.POSITIVE_INFINITY
       const bi = b.sortIndex ?? Number.POSITIVE_INFINITY
       return ai - bi
     })
-    if (oldIndex < 0 || newIndex < 0 || oldIndex >= inGroup.length || newIndex >= inGroup.length) {
-      return list
-    }
-    const reordered = arrayMove(inGroup, oldIndex, newIndex)
-    const newSortIndex = new Map<string, number>()
-    reordered.forEach((s, i) => {
-      newSortIndex.set(s.id, i)
-    })
-    return list.map((s) => (newSortIndex.has(s.id) ? { ...s, sortIndex: newSortIndex.get(s.id) } : s))
-  })
+  if (oldIndex < 0 || newIndex < 0 || oldIndex >= inGroup.length || newIndex >= inGroup.length) {
+    return
+  }
+  const reordered = arrayMove(inGroup, oldIndex, newIndex)
+  const newSortIndex = new Map(reordered.map((s, i) => [s.id, i] as const))
+  const metaStorage = await chatStore.getMetaStorage()
+  await Promise.all([...newSortIndex].map(([id, sortIndex]) => metaStorage.update(id, { sortIndex })))
+  chatStore.updateSessionListData((items) =>
+    items.map((it) => (newSortIndex.has(it.id) ? { ...it, sortIndex: newSortIndex.get(it.id) } : it))
+  )
 }
 
 export async function reorderGroups(oldIndex: number, newIndex: number): Promise<void> {

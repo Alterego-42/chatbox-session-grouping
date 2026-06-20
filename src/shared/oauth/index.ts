@@ -1,90 +1,14 @@
-import type { ProviderSettings } from '../types'
-
-/**
- * In the open-source edition OAuth is not available.
- * These stubs keep the provider pipeline working without it.
- */
-
-export interface OAuthProviderInfo {
-  providerId: string
-  name: string
-  flowType: 'callback' | 'code-paste' | 'device-code'
-}
-
-// Stubs for types only consumed when desktop OAuth features are enabled.
-// Keep these minimal — real shapes live in the non-OSS edition.
-export interface OAuthCredentials {
-  accessToken?: string
-  refreshToken?: string
-  expiresAt?: number
-}
-export interface OAuthResult {
-  success: boolean
-  error?: string
-  credentials?: OAuthCredentials
-}
-export interface OAuthStartResult {
-  success: boolean
-  error?: string
-}
-export interface DeviceFlowStartResult {
-  success: boolean
-  error?: string
-}
-export const OAuthIpcChannels = {
-  LOGIN: 'oauth:login',
-  START_LOGIN: 'oauth:start-login',
-  EXCHANGE_CODE: 'oauth:exchange-code',
-  START_DEVICE_FLOW: 'oauth:start-device-flow',
-  WAIT_DEVICE_TOKEN: 'oauth:wait-device-token',
-  REFRESH: 'oauth:refresh',
-  CANCEL: 'oauth:cancel',
-} as const
-
-export function mergeSharedOAuthProviderSettings(
-  providerId: string,
-  providers: Record<string, ProviderSettings> | undefined
-): ProviderSettings {
-  return providers?.[providerId] || {}
-}
-
-export function resolveEffectiveApiKey(
-  providerSetting: ProviderSettings,
-  _platformType: string
-): string {
-  return providerSetting.apiKey || ''
-}
-
-export function isUsingOAuth(
-  _providerSetting: ProviderSettings,
-  _platformType: string
-): boolean {
-  return false
-}
-
-export function isOAuthExpired(_providerSetting: ProviderSettings): boolean {
-  return false
-}
-
-export function toOAuthProviderId(_chatboxProviderId: string): string | undefined {
-  return undefined
-}
-
-export function toOAuthSettingsProviderId(_chatboxProviderId: string): string | undefined {
-  return undefined
-}
-
-// No-op credential manager stub
-export function createOAuthCredentialManager(..._args: unknown[]): undefined {
-  return undefined
-}
-
-// No-op OAuth fetch stubs — they are only called when `isOAuth && credentialManager` is truthy,
-// which never happens in the open-source edition. Returning undefined keeps the type contract.
-export function createBearerOAuthFetch(..._args: unknown[]): undefined {
-  return undefined
-}
-
-export function createOpenAIOAuthFetch(..._args: unknown[]): undefined {
-  return undefined
-}
+export { createBearerOAuthFetch } from './bearer-oauth-fetch'
+export { createCopilotOAuthFetch } from './copilot-oauth-fetch'
+export { createOAuthCredentialManager } from './credential-manager'
+export { createOpenAIOAuthFetch } from './openai-oauth-fetch'
+export { mergeSharedOAuthProviderSettings, toOAuthProviderId, toOAuthSettingsProviderId } from './provider-mapping'
+export { isOAuthExpired, isUsingOAuth, resolveEffectiveApiKey } from './resolve-auth'
+export type {
+  DeviceFlowStartResult,
+  OAuthCredentials,
+  OAuthProviderInfo,
+  OAuthResult,
+  OAuthStartResult,
+} from './types'
+export { OAuthIpcChannels } from './types'

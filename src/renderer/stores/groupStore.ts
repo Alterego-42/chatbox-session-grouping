@@ -141,11 +141,16 @@ export async function updateGroup(id: string, patch: Partial<Omit<SessionGroup, 
 }
 
 export async function deleteGroup(id: string): Promise<void> {
-  // Step (a): clear groupId on all sessions that belong to this group
-  await chatStore.updateSessionList((sessions) => {
-    const list = sessions ?? []
-    return list.map((s) => (s.groupId === id ? { ...s, groupId: undefined } : s))
-  })
+  // Step (a): clear groupId on all sessions that belong to this group (persist to the meta store)
+  const metaStorage = await chatStore.getMetaStorage()
+  const affected = (await chatStore.listSessionsMeta()).filter((s) => s.groupId === id)
+  if (affected.length > 0) {
+    await Promise.all(affected.map((s) => metaStorage.update(s.id, { groupId: undefined })))
+    const affectedIds = new Set(affected.map((s) => s.id))
+    chatStore.updateSessionListData((items) =>
+      items.map((it) => (affectedIds.has(it.id) ? { ...it, groupId: undefined } : it))
+    )
+  }
   // Step (b): remove the group itself
   await updateGroupList((groups) => {
     const existing = groups ?? []

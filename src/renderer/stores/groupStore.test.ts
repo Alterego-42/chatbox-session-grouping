@@ -1,4 +1,4 @@
-import type { SessionGroup, SessionMeta, UpdaterFn } from '@shared/types'
+import type { SessionGroup, SessionMeta } from '@shared/types'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const storageState: { groups: SessionGroup[]; sessions: SessionMeta[] } = {
@@ -40,14 +40,20 @@ vi.mock('../lib/utils', () => ({
   getLogger: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
 }))
 
-const updateSessionListMock = vi.fn(async (updater: UpdaterFn<SessionMeta[]>) => {
+const metaStorageMock = {
+  update: vi.fn(async (id: string, patch: Partial<SessionMeta>) => {
+    storageState.sessions = storageState.sessions.map((s) => (s.id === id ? { ...s, ...patch } : s))
+    return storageState.sessions.find((s) => s.id === id) ?? null
+  }),
+}
+const updateSessionListDataMock = vi.fn((updater: (items: SessionMeta[]) => SessionMeta[]) => {
   storageState.sessions = updater(storageState.sessions)
-  await setItemNowSpy('chat-sessions-list', storageState.sessions)
 })
 
 vi.mock('./chatStore', () => ({
-  updateSessionList: (updater: UpdaterFn<SessionMeta[]>) => updateSessionListMock(updater),
   listSessionsMeta: async () => storageState.sessions,
+  getMetaStorage: async () => metaStorageMock,
+  updateSessionListData: (updater: (items: SessionMeta[]) => SessionMeta[]) => updateSessionListDataMock(updater),
 }))
 
 async function importFresh() {
@@ -67,10 +73,14 @@ describe('groupStore', () => {
         storageState.sessions = value as SessionMeta[]
       }
     })
-    updateSessionListMock.mockClear()
-    updateSessionListMock.mockImplementation(async (updater: UpdaterFn<SessionMeta[]>) => {
+    metaStorageMock.update.mockClear()
+    metaStorageMock.update.mockImplementation(async (id: string, patch: Partial<SessionMeta>) => {
+      storageState.sessions = storageState.sessions.map((s) => (s.id === id ? { ...s, ...patch } : s))
+      return storageState.sessions.find((s) => s.id === id) ?? null
+    })
+    updateSessionListDataMock.mockClear()
+    updateSessionListDataMock.mockImplementation((updater: (items: SessionMeta[]) => SessionMeta[]) => {
       storageState.sessions = updater(storageState.sessions)
-      await setItemNowSpy('chat-sessions-list', storageState.sessions)
     })
   })
 
@@ -121,9 +131,10 @@ describe('groupStore', () => {
     ]
 
     const order: string[] = []
-    updateSessionListMock.mockImplementationOnce(async (updater: UpdaterFn<SessionMeta[]>) => {
-      order.push('sessions')
-      storageState.sessions = updater(storageState.sessions)
+    metaStorageMock.update.mockImplementation(async (id: string, patch: Partial<SessionMeta>) => {
+      if (!order.includes('sessions')) order.push('sessions')
+      storageState.sessions = storageState.sessions.map((s) => (s.id === id ? { ...s, ...patch } : s))
+      return storageState.sessions.find((s) => s.id === id) ?? null
     })
     setItemNowSpy.mockImplementation(async (key: string, value: unknown) => {
       if (key === 'session-groups-list') {

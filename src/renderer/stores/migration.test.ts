@@ -298,6 +298,8 @@ vi.mock('../platform/storages', () => ({
 vi.mock('../../shared/defaults', () => ({
   settings: vi.fn(() => ({})),
   SystemProviders: vi.fn(() => []),
+  SESSION_MANAGER_ID: '__chatbox_session_manager__',
+  RESERVED_SESSION_IDS: new Set(['__chatbox_session_manager__']),
 }))
 
 vi.mock('../lib/utils', () => ({
@@ -391,20 +393,20 @@ describe('migrateStorage test', () => {
   it('should skip migration when config version is already current', async () => {
     const { initData } = await import('@/setup/init_data')
 
-    // Setup: Desktop v1.17.0 - configVersion = 13 (current) in IPC file storage
-    ipcFileData[StorageKey.ConfigVersion] = JSON.stringify(13)
+    // Setup: Desktop v1.17.0 - configVersion = 14 (current) in IPC file storage
+    ipcFileData[StorageKey.ConfigVersion] = JSON.stringify(14)
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should not initialize data or set version when already at current version
     expect(initData).not.toHaveBeenCalled()
-    // configVersion should remain 13
-    expect(ipcFileData[StorageKey.ConfigVersion]).toBe(JSON.stringify(13))
+    // configVersion should remain 14
+    expect(ipcFileData[StorageKey.ConfigVersion]).toBe(JSON.stringify(14))
   })
 
   it('should initialize data on first run (configVersion = 0, no old storage)', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Setup: First run - no data in any storage
@@ -414,7 +416,7 @@ describe('migrateStorage test', () => {
 
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should set current version to IPC file storage (Desktop platform)
@@ -423,7 +425,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should not migrate when old storage type matches current storage type', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Desktop platform already set in beforeEach
@@ -447,7 +449,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('INDEXEDDB', oldIndexedDBData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should NOT migrate when storage types are the same (both INDEXEDDB for sessions)
@@ -465,7 +467,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should migrate from desktop file storage (v1.9.x) to v1.17.0', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Desktop platform already set in beforeEach
@@ -485,7 +487,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('DESKTOP_FILE', oldFileData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should get all values from old storage
@@ -527,7 +529,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should skip migration when old storage has same type as current storage', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Setup: Switch to Mobile platform
@@ -549,7 +551,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('MOBILE_SQLITE', oldStorageData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
 
     await migration._migrateStorageForTest()
 
@@ -562,7 +564,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should migrate from localStorage (v1.9.8) to SQLite (v1.17.0) on mobile', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Setup: Switch to Mobile platform
@@ -582,7 +584,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('LOCAL_STORAGE', oldLocalStorageData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Mobile should copy all keys from localStorage to SQLite
@@ -607,7 +609,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should migrate from IndexedDB (v1.16.1) to SQLite (v1.17.0) on mobile', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Setup: Switch to Mobile platform
@@ -627,7 +629,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('INDEXEDDB', oldIndexedDBData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Mobile should copy all keys from IndexedDB to SQLite
@@ -651,7 +653,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should handle multiple old storages and pick the newest one (mobile: localStorage v5 + IndexedDB v12)', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Setup: Switch to Mobile platform
@@ -683,7 +685,7 @@ describe('migrateStorage test', () => {
 
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockLocalStorage, mockIndexedDBStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should migrate from IndexedDB (newer) not localStorage
@@ -712,7 +714,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should migrate from desktop file (v1.9.10) to IndexedDB (v1.16.1) and preserve settings/configs in file', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Desktop platform already set in beforeEach
@@ -732,7 +734,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('DESKTOP_FILE', oldFileData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should get all values from old storage
@@ -763,7 +765,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should handle mobile migration with SQLite v7 data (v1.9.11 to v1.17.0)', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Setup: Switch to Mobile platform
@@ -787,7 +789,7 @@ describe('migrateStorage test', () => {
     const mockOldStorage = createOldStorageMock('MOBILE_SQLITE', oldSQLiteData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Current storage reads configVersion from sqliteData, which is 7 (not 0)
@@ -809,7 +811,7 @@ describe('migrateStorage test', () => {
   })
 
   it('should NOT migrate from file storage when desktop configVersion >= 12 (prevent duplicate migration bug)', async () => {
-    const { getOldVersionStorages } = await import('../platform/storages')
+    const { getOldVersionStorages } = await import('@/platform/storages')
     const { initData } = await import('@/setup/init_data')
 
     // Desktop platform already set in beforeEach
@@ -822,7 +824,7 @@ describe('migrateStorage test', () => {
     // FIX: Desktop should NOT migrate from file storage if configVersion >= 12
     // because v1.16.1 already migrated sessions to IndexedDB
     //
-    // Scenario: Desktop v1.16.1 user (configVersion=12) upgrades to v1.17.0 (configVersion=13)
+    // Scenario: Desktop v1.16.1 user (configVersion=12) upgrades to v1.17.0 (configVersion=14)
     // File storage still has old session data from pre-v1.16.1 that wasn't cleaned up
     // Current configVersion in file: 12 (already migrated)
     // Should NOT re-migrate the old session data
@@ -851,7 +853,7 @@ describe('migrateStorage test', () => {
     const mockOldFileStorage = createOldStorageMock('DESKTOP_FILE', oldFileData)
     ;(getOldVersionStorages as ReturnType<typeof vi.fn>).mockReturnValueOnce([mockOldFileStorage])
 
-    const migration = await import('./migration')
+    const migration = await import('@/stores/migration')
     await migration._migrateStorageForTest()
 
     // Should NOT migrate because:
@@ -871,7 +873,7 @@ describe('migrateStorage test', () => {
   })
 })
 
-describe('migrate_14_to_15', () => {
+describe('migrate 14→15→16 (session meta DB + session groups)', () => {
   type MigrateStore = {
     getData: <T>(key: string, defaultValue: T) => Promise<T>
     setData: <T>(key: string, value: T) => Promise<void>
@@ -895,62 +897,115 @@ describe('migrate_14_to_15', () => {
     return { store, data }
   }
 
+  function makeFakeMetaStore() {
+    const records: Array<Record<string, unknown>> = []
+    return {
+      records,
+      initialize: vi.fn(async () => {}),
+      getTotal: vi.fn(async () => records.length),
+      createMany: vi.fn(async (recs: Array<Record<string, unknown>>) => {
+        records.push(...recs)
+      }),
+      create: vi.fn(async (r: Record<string, unknown>) => {
+        records.push(r)
+      }),
+      getById: vi.fn(async (id: string) => records.find((r) => r.id === id) ?? null),
+      update: vi.fn(async () => null),
+    }
+  }
+
+  let fakeMeta: ReturnType<typeof makeFakeMetaStore>
+
   beforeEach(() => {
     vi.clearAllMocks()
+    fakeMeta = makeFakeMetaStore()
+    // 14→15 (legacy list → meta DB) and 15→16 (groups + self-heal backfill) call
+    // platform.getSessionMetaStorage(); inject an in-memory fake so tests need no IndexedDB.
+    vi.spyOn(currentPlatform, 'getSessionMetaStorage').mockReturnValue(
+      fakeMeta as unknown as ReturnType<Platform['getSessionMetaStorage']>
+    )
   })
 
-  it('initializes session-groups-list to [] and bumps configVersion to 15', async () => {
+  it('chains an empty v14 store up to v16 with session-groups-list = []', async () => {
     const { store, data } = makeMockStore({ configVersion: 14 })
     const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
     expect(data['session-groups-list']).toEqual([])
-    expect(data.configVersion).toBe(15)
+    expect(data.configVersion).toBe(16)
   })
 
-  it('is idempotent: preserves existing non-empty session-groups-list when re-run', async () => {
-    const existing = [{ id: 'group:x', name: 'A', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 }]
+  it('migrates a legacy v14 session list into the meta DB and reaches v16', async () => {
     const { store, data } = makeMockStore({
       configVersion: 14,
+      'chat-sessions-list': [{ id: 's1', name: 'one' }],
+    })
+    const migration = await import('./migration.js')
+    await migration.migrateOnData(store, false)
+
+    expect(fakeMeta.records.map((r) => r.id)).toContain('s1')
+    expect(data['session-groups-list']).toEqual([])
+    expect(data.configVersion).toBe(16)
+  })
+
+  it('fork-v15 self-heal: backfills the legacy list into the meta DB preserving groupId', async () => {
+    // Real fork data sits at "15": metas still in chat-sessions-list WITH groupId, meta DB empty.
+    const { store, data } = makeMockStore({
+      configVersion: 15,
+      'session-groups-list': [
+        { id: 'group:x', name: 'X', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 },
+      ],
+      'chat-sessions-list': [
+        { id: 's1', name: 'grouped', groupId: 'group:x' },
+        { id: 's2', name: 'loose' },
+      ],
+    })
+    const migration = await import('./migration.js')
+    await migration.migrateOnData(store, false)
+
+    const s1 = fakeMeta.records.find((r) => r.id === 's1')
+    expect(s1?.groupId).toBe('group:x')
+    expect(fakeMeta.records.map((r) => r.id)).toEqual(expect.arrayContaining(['s1', 's2']))
+    expect(data.configVersion).toBe(16)
+  })
+
+  it('does not backfill when the meta DB is already populated (idempotent)', async () => {
+    const { store, data } = makeMockStore({
+      configVersion: 15,
+      'session-groups-list': [],
+      'chat-sessions-list': [{ id: 's1', name: 'one', groupId: 'group:x' }],
+    })
+    // Simulate an upstream-v15 user whose metas already live in the DB.
+    fakeMeta.records.push({ id: 's1', name: 'one' })
+    const migration = await import('./migration.js')
+    await migration.migrateOnData(store, false)
+
+    expect(fakeMeta.createMany).not.toHaveBeenCalled()
+    expect(data.configVersion).toBe(16)
+  })
+
+  it('preserves an existing non-empty session-groups-list', async () => {
+    const existing = [{ id: 'group:x', name: 'A', parentId: null, sortIndex: 0, createdAt: 1, updatedAt: 1 }]
+    const { store, data } = makeMockStore({
+      configVersion: 15,
       'session-groups-list': existing,
     })
     const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
     expect(data['session-groups-list']).toEqual(existing)
-    expect(data.configVersion).toBe(15)
-
-    // Re-run the 14→15 step; user data must not be overwritten
-    data.configVersion = 14
-    await migration.migrateOnData(store, false)
-
-    expect(data['session-groups-list']).toEqual(existing)
-    expect(data.configVersion).toBe(15)
+    expect(data.configVersion).toBe(16)
   })
 
-  it('chains from configVersion 12 up to 15 and ends with session-groups-list = []', async () => {
+  it('chains from configVersion 12 up to 16', async () => {
     const { store, data } = makeMockStore({
       configVersion: 12,
-      'chat-sessions-list': [], // keeps migrate_13_to_14 as a no-op
+      'chat-sessions-list': [], // keeps migrate_13_to_14 a no-op
     })
     const migration = await import('./migration.js')
     await migration.migrateOnData(store, false)
 
-    expect(data.configVersion).toBe(15)
+    expect(data.configVersion).toBe(16)
     expect(data['session-groups-list']).toEqual([])
-  })
-
-  it('does not rewrite sessions that lack a groupId field', async () => {
-    const oldSession = { id: 's1', name: 'old', messages: [] }
-    const { store, data } = makeMockStore({
-      configVersion: 14,
-      'session:s1': oldSession,
-    })
-    const migration = await import('./migration.js')
-    await migration.migrateOnData(store, false)
-
-    expect(data['session:s1']).toEqual(oldSession)
-    expect(data['session-groups-list']).toEqual([])
-    expect(data.configVersion).toBe(15)
   })
 })

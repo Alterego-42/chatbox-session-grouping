@@ -1,5 +1,5 @@
 import { RESERVED_SESSION_IDS } from '@shared/defaults'
-import type { Session, SessionMeta } from '@shared/types'
+import type { Session, SessionMeta, SessionMetaRecord } from '@shared/types'
 import { mapValues } from 'lodash'
 import { migrateMessage } from '../../shared/utils/message'
 
@@ -49,4 +49,19 @@ export function sortSessions(sessions: SessionMeta[]): SessionMeta[] {
     reversed.unshift(sess)
   }
   return pinned.concat(reversed)
+}
+
+export function createSessionMetaRecordsFromLegacyList(
+  sessions: SessionMeta[],
+  now = Date.now()
+): SessionMetaRecord[] {
+  const sortedVisibleSessions = sortSessions(sessions)
+  const sortOrderById = new Map(sortedVisibleSessions.map((session, i) => [session.id, now - i * 1000]))
+  const hiddenSortOrderStart = now - sortedVisibleSessions.length * 1000
+
+  return sessions.map((session, i) => ({
+    ...session,
+    sortOrder: sortOrderById.get(session.id) ?? hiddenSortOrderStart - i * 1000,
+    createdAt: now - i * 1000,
+  }))
 }

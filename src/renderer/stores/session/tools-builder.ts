@@ -7,10 +7,13 @@ import { mcpController } from '@/packages/mcp/controller'
 import fileToolSet from '@/packages/model-calls/toolsets/file'
 import { getToolSet as getKBToolSet } from '@/packages/model-calls/toolsets/knowledge-base'
 import sandboxToolSet from '@/packages/model-calls/toolsets/sandbox'
-import websearchToolSet, { parseLinkTool, webSearchTool } from '@/packages/model-calls/toolsets/web-search'
-import { PROVIDERS_WITH_PARSE_LINK } from '@/packages/web-search'
+import { getToolSet as getSessionAttachmentRagToolSet } from '@/packages/model-calls/toolsets/session-attachment-rag'
+import { getToolSetDescription, parseLinkTool, webSearchTool } from '@/packages/model-calls/toolsets/web-search'
 import { skillsController } from '@/packages/skills/controller'
+import { PROVIDERS_WITH_PARSE_LINK } from '@/packages/web-search'
 import * as settingActions from '@/stores/settingActions'
+import NiceModal from '@ebay/nice-modal-react'
+import { SESSION_MANAGER_ID } from '@shared/defaults'
 
 export interface BuildToolsOptions {
   webBrowsing: boolean
@@ -18,6 +21,8 @@ export interface BuildToolsOptions {
   messages: Message[]
   sandboxEnabled?: boolean
   enabledSkillNames?: string[]
+  /** When set to the reserved AI-manager session id, expose the session-management toolset. */
+  sessionId?: string
 }
 
 export interface BuildToolsResult {
@@ -27,6 +32,23 @@ export interface BuildToolsResult {
 
 function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function getSessionAttachmentRagIds(messages: Message[]): number[] {
+  return Array.from(
+    new Set(
+      messages.flatMap((message) =>
+        (message.files ?? [])
+          .filter(
+            (file) =>
+              file.ragMode === 'session-retrieval' &&
+              file.sessionAttachmentAvailability !== 'blocked' &&
+              typeof file.sessionAttachmentId === 'number'
+          )
+          .map((file) => file.sessionAttachmentId as number)
+      )
+    )
+  )
 }
 
 export function generateSkillsXml(skills: SkillInfo[], toolUseSupported = false): string {
@@ -62,10 +84,16 @@ export async function buildToolsForSession(
 ): Promise<BuildToolsResult> {
   const { webBrowsing, knowledgeBase, messages, sandboxEnabled, enabledSkillNames } = options
 
-  const hasFileOrLink = messages.some((m) => m.files?.length || m.links?.length)
-  const needFileToolSet = hasFileOrLink && model.isSupportToolUse('read-file')
+  const hasInlineFileOrLink = messages.some(
+    (m) => m.links?.length || m.files?.some((file) => file.ragMode !== 'session-retrieval')
+  )
+  const sessionAttachmentIds = getSessionAttachmentRagIds(messages)
+  const needFileToolSet = hasInlineFileOrLink && model.isSupportToolUse('read-file')
+  const needSessionAttachmentRagToolSet = sessionAttachmentIds.length > 0 && model.isSupportToolUse('read-file')
   const kbSupported = knowledgeBase && model.isSupportToolUse('knowledge-base')
   const webSupported = webBrowsing && model.isSupportToolUse('web-browsing')
+  const searchProvider = settingActions.getExtensionSettings().webSearch.provider
+  const includeParseLinkTool = webSupported && PROVIDERS_WITH_PARSE_LINK.has(searchProvider)
 
   let kbToolSet: Awaited<ReturnType<typeof getKBToolSet>> | null = null
   if (knowledgeBase && kbSupported) {
@@ -76,15 +104,27 @@ export async function buildToolsForSession(
     }
   }
 
+  let sessionAttachmentRagToolSet: Awaited<ReturnType<typeof getSessionAttachmentRagToolSet>> | null = null
+  if (needSessionAttachmentRagToolSet) {
+    try {
+      sessionAttachmentRagToolSet = await getSessionAttachmentRagToolSet(sessionAttachmentIds)
+    } catch (err) {
+      console.error('Failed to load session attachment RAG toolset:', err)
+    }
+  }
+
   let instructions = ''
   if (kbToolSet && kbSupported) {
     instructions += kbToolSet.description
+  }
+  if (sessionAttachmentRagToolSet) {
+    instructions += sessionAttachmentRagToolSet.description
   }
   if (needFileToolSet) {
     instructions += fileToolSet.description
   }
   if (webSupported) {
-    instructions += websearchToolSet.description
+    instructions += getToolSetDescription({ includeParseLink: includeParseLinkTool })
   }
   if (sandboxEnabled) {
     instructions += sandboxToolSet.description
@@ -98,14 +138,17 @@ export async function buildToolsForSession(
     tools.web_search = webSearchTool
     // Inject parse_link based on the selected provider's declared capability.
     // Validation (Pro for build-in, API key for third parties) happens at execution time.
-    const searchProvider = settingActions.getExtensionSettings().webSearch.provider
-    if (PROVIDERS_WITH_PARSE_LINK.has(searchProvider)) {
+    if (includeParseLinkTool) {
       tools.parse_link = parseLinkTool
     }
   }
 
   if (kbToolSet && kbSupported) {
     tools = { ...tools, ...kbToolSet.tools }
+  }
+
+  if (sessionAttachmentRagToolSet) {
+    tools = { ...tools, ...sessionAttachmentRagToolSet.tools }
   }
 
   if (needFileToolSet) {
@@ -172,6 +215,19 @@ export async function buildToolsForSession(
         })
       }
     }
+  }
+
+  // Reserved AI-manager session: expose the session-management toolset (list/move/rename/group
+  // operations + summaries). Re-homed here after upstream removed stream-text.ts (its former host).
+  // Lazy-imported so this module doesn't pull the renderer-only chatStore at load time (keeps the
+  // tool-builder importable in node test env).
+  if (options.sessionId === SESSION_MANAGER_ID) {
+    const { buildSessionManagerToolset } = await import('@/packages/model-calls/toolsets/session-manager')
+    const sessionManagerToolset = buildSessionManagerToolset({
+      confirmDangerous: (action) => NiceModal.show('confirm-dangerous-action', action) as Promise<boolean>,
+    })
+    instructions += sessionManagerToolset.description
+    tools = { ...tools, ...sessionManagerToolset.tools }
   }
 
   return { tools, instructions }

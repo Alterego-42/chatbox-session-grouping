@@ -36,7 +36,7 @@ import { languageNameMap, languages } from '@/i18n/locales'
 import { deriveInitialSelection, filterGroupsForExport, filterSessionsForExport } from '@/lib/export-helpers'
 import platform from '@/platform'
 import storage, { StorageKey } from '@/storage'
-import { recoverSessionList, useSessionList } from '@/stores/chatStore'
+import { getMetaStorage, recoverSessionList, useSessionList } from '@/stores/chatStore'
 import { useGroups } from '@/stores/groupStore'
 import { migrateOnData } from '@/stores/migration'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -421,6 +421,9 @@ const ImportExportDataSection = () => {
               shouldExport = true
             } else if (key === StorageKey.MyCopilots && exportItems.includes(ExportDataItem.Copilot)) {
               shouldExport = true
+            } else if (key === StorageKey.ChatSessionsList) {
+              // Skip: session meta is now exported from DB below
+              shouldExport = false
             } else if (key === StorageKey.ChatSessionSettings && exportItems.includes(ExportDataItem.Conversations)) {
               shouldExport = true
             } else if (
@@ -475,6 +478,20 @@ const ImportExportDataSection = () => {
           }
         } catch (error) {
           console.error('Failed to get storage keys:', error)
+        }
+
+        // Export session meta from DB (no longer in key-value storage)
+        if (exportItems.includes(ExportDataItem.Conversations)) {
+          try {
+            const metaStorage = await getMetaStorage()
+            const allMeta = await metaStorage.getAll()
+            if (allMeta.length > 0) {
+              yield ','
+              yield `"${StorageKey.ChatSessionsList}":${JSON.stringify(allMeta)}`
+            }
+          } catch (error) {
+            console.error('Failed to export session meta from DB:', error)
+          }
         }
 
         yield '}'
@@ -541,12 +558,17 @@ const ImportExportDataSection = () => {
           }
 
           if (importedChatSessions) {
-            const previousChatSessions = await storage.getItem(StorageKey.ChatSessionsList, [])
-
-            await storage.setItemNow(
-              StorageKey.ChatSessionsList,
-              uniqBy([...previousChatSessions, ...importedChatSessions], 'id')
-            )
+            const metaStorage = await getMetaStorage()
+            for (const item of importedChatSessions) {
+              const existing = await metaStorage.getById(item.id)
+              if (!existing) {
+                await metaStorage.create({
+                  ...item,
+                  sortOrder: item.sortOrder ?? Date.now(),
+                  createdAt: item.createdAt ?? Date.now(),
+                })
+              }
+            }
           }
 
           const importedGroupsRaw = importData[StorageKey.SessionGroupsList]

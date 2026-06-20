@@ -1,6 +1,8 @@
 import { type RemoteConfig, Theme } from '@shared/types'
+import { z } from 'zod'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import Toasts from '@/components/common/Toasts'
+import DesktopDownloadReminder from '@/components/layout/DesktopDownloadReminder'
 import ExitFullscreenButton from '@/components/layout/ExitFullscreenButton'
 import useAppTheme from '@/hooks/useAppTheme'
 import { useSystemLanguageWhenInit } from '@/hooks/useDefaultSystemLanguage'
@@ -44,6 +46,8 @@ import { useQuery } from '@tanstack/react-query'
 import { createRootRoute, Outlet, useLocation } from '@tanstack/react-router'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef } from 'react'
+import { trackJkViewEvent } from '@/analytics/jk'
+import { JK_EVENTS, JK_PAGE_NAMES } from '@/analytics/jk-events'
 import SettingsModal, { navigateToSettings } from '@/modals/Settings'
 import { prefetchModelRegistry } from '@/packages/model-registry'
 import { getOS } from '@/packages/navigator'
@@ -56,11 +60,12 @@ import { router } from '@/router'
 import Sidebar from '@/Sidebar'
 import storage from '@/storage'
 import * as atoms from '@/stores/atoms'
-import { useSession } from '@/stores/chatStore'
+import { getSession, useSession } from '@/stores/chatStore'
 import { initOnboardingStore, onboardingStore } from '@/stores/onboardingStore'
 import * as premiumActions from '@/stores/premiumActions'
 import * as settingActions from '@/stores/settingActions'
 import { initSettingsStore, settingsStore, useLanguage, useSettingsStore, useTheme } from '@/stores/settingsStore'
+import { getTaskSession } from '@/stores/taskSessionStore'
 import { useUIStore } from '@/stores/uiStore'
 import { CHATBOX_BUILD_CHANNEL, CHATBOX_BUILD_PLATFORM } from '@/variables'
 import { blobToDataUrl } from './image-creator/-components/constants'
@@ -70,10 +75,10 @@ function BackgroundImageOverlay() {
   const globalBackgroundImageKey = useSettingsStore((s) => s.backgroundImageKey)
   const showSidebar = useUIStore((s) => s.showSidebar)
   const sidebarWidth = useSidebarWidth()
-  const currentSessionId = useAtomValue(atoms.currentSessionIdAtom)
   const isRootPage = location.pathname === '/'
   const isSessionPage = location.pathname.startsWith('/session/') && location.pathname.length > '/session/'.length
-  const sessionId = isSessionPage && currentSessionId && currentSessionId !== 'new' ? currentSessionId : null
+  const sessionId =
+    isSessionPage && location.pathname !== '/session/new' ? location.pathname.slice('/session/'.length) : null
   const { session } = useSession(sessionId)
   const effectiveKey =
     session?.backgroundImage?.type === 'storage-key'
@@ -130,7 +135,7 @@ function BackgroundImageOverlay() {
 }
 
 function Root() {
-  const { isExceeded, versionLoaded } = useVersion()
+  const { isExceeded, isExceededResolved } = useVersion()
   const location = useLocation()
   const spellCheck = useSettingsStore((state) => state.spellCheck)
   const language = useLanguage()
@@ -161,13 +166,14 @@ function Root() {
         return
       }
 
-      // On store builds (iOS / Google Play), wait for version to load before making guide/navigation decisions.
-      // Without this, isExceeded is initially false (version not yet loaded),
-      // which would incorrectly navigate to the guide during store review.
+      // On store builds (iOS / Google Play), wait for both version AND remoteConfig.current_version
+      // before making guide/navigation decisions. isExceeded depends on both async data sources;
+      // if we only wait for version, remoteConfig may still be empty, causing isExceeded to be
+      // falsely falsy and letting the guide navigation slip through during store review.
       const isStoreReviewPlatform =
         CHATBOX_BUILD_PLATFORM === 'ios' ||
         (CHATBOX_BUILD_PLATFORM === 'android' && CHATBOX_BUILD_CHANNEL === 'google_play')
-      if (isStoreReviewPlatform && !versionLoaded) {
+      if (isStoreReviewPlatform && !isExceededResolved) {
         return
       }
 
@@ -192,7 +198,7 @@ function Root() {
         return
       }
     })()
-  }, [setOpenAboutDialog, setRemoteConfig, location.pathname, isExceeded, versionLoaded])
+  }, [setOpenAboutDialog, setRemoteConfig, location.pathname, isExceeded, isExceededResolved])
 
   const showSidebar = useUIStore((s) => s.showSidebar)
   const sidebarWidth = useSidebarWidth()
@@ -216,7 +222,9 @@ function Root() {
       const sid = JSON.parse(localStorage.getItem('_currentSessionIdCachedAtom') || '""') as string
       if (sid && startupPage === 'session') {
         router.navigate({
-          to: `/session/${sid}`,
+          to: '/session/$sessionId',
+          params: { sessionId: sid },
+          search: (prev) => prev,
           replace: true,
         })
       }
@@ -234,13 +242,73 @@ function Root() {
           const settingsPath = path.substring('/settings'.length)
           navigateToSettings(settingsPath || '/')
         } else {
-          router.navigate({ to: path })
+          router.navigate({ to: path as '/', search: (prev) => prev })
         }
       })
     }
   }, [])
 
+  // Route → sidebar mode sync
+  const setSidebarMode = useUIStore((s) => s.setSidebarMode)
+  useEffect(() => {
+    const pathname = location.pathname
+    if (pathname === '/task' || pathname.startsWith('/task/')) {
+      setSidebarMode('task')
+    } else if (pathname === '/' || pathname.startsWith('/session/')) {
+      setSidebarMode('chat')
+    }
+    // Other routes (settings, copilots, about, etc.) don't change sidebarMode
+  }, [location.pathname, setSidebarMode])
 
+  // Page view tracking
+  const settingsSearch = (location.search as Record<string, unknown>)?.settings as string | undefined
+  useEffect(() => {
+    const pathname = location.pathname
+    let pageName: string | undefined
+
+    // 桌面端 settings 以 modal 方式打开，pathname 不变，通过 search.settings 控制
+    if (settingsSearch) {
+      pageName = JK_PAGE_NAMES.SETTING_PAGE
+    } else if (pathname === '/' || pathname.startsWith('/session/')) {
+      pageName = JK_PAGE_NAMES.CHAT_PAGE
+    } else if (pathname === '/task' || pathname.startsWith('/task/')) {
+      pageName = JK_PAGE_NAMES.TASK_PAGE
+    } else if (pathname.startsWith('/image-creator')) {
+      pageName = JK_PAGE_NAMES.IMAGE_PAGE
+    } else if (pathname.startsWith('/copilots')) {
+      pageName = JK_PAGE_NAMES.COPILOTS_PAGE
+    } else if (pathname.startsWith('/settings')) {
+      pageName = JK_PAGE_NAMES.SETTING_PAGE
+    } else if (pathname.startsWith('/guide')) {
+      pageName = JK_PAGE_NAMES.HELP_PAGE
+    } else if (pathname === '/about') {
+      pageName = JK_PAGE_NAMES.ABOUT_PAGE
+    }
+
+    if (!pageName) return
+
+    const trackPageView = async () => {
+      let content: string | undefined
+
+      if (pathname.startsWith('/session/')) {
+        const sessionId = pathname.slice('/session/'.length)
+        const session = await getSession(sessionId).catch(() => null)
+        content = session?.name
+      } else if (pathname.startsWith('/task/') && pathname.length > '/task/'.length) {
+        const taskId = pathname.slice('/task/'.length)
+        const taskSession = await getTaskSession(taskId).catch(() => null)
+        content = taskSession?.name
+      }
+
+      trackJkViewEvent(JK_EVENTS.PAGE_VIEW, {
+        pageName,
+        content,
+      })
+    }
+
+    // biome-ignore lint/nursery/noFloatingPromises: analytics tracking
+    trackPageView()
+  }, [location.pathname, settingsSearch])
 
   const { needRoomForMacWindowControls } = useNeedRoomForWinControls()
   useEffect(() => {
@@ -297,6 +365,7 @@ function Root() {
       {/* <ReportContentDialog /> */}
       {/* 搜索 */}
       <SearchDialog />
+      <DesktopDownloadReminder />
       {/* 没有配置模型时的欢迎弹窗 */}
       {/* <WelcomeDialog /> */}
       <Toasts /> {/* mui */}
@@ -571,6 +640,9 @@ const creteMantineTheme = (scale = 1) =>
   })
 
 export const Route = createRootRoute({
+  validateSearch: z.object({
+    settings: z.string().optional(),
+  }),
   component: () => {
     useI18nEffect()
     premiumActions.useAutoValidate() // 每次启动都执行 license 检查，防止用户在lemonsqueezy管理页面中取消了当前设备的激活

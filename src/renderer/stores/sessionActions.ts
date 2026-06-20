@@ -14,9 +14,8 @@ export {
 export { exportSessionChat } from './session/export'
 // Re-export fork operations from session/forks.ts
 export { createNewFork, deleteFork, expandFork, switchFork } from './session/forks'
-// Re-export generation operations from session/generation.ts
+// Re-export generation operations from session module
 export {
-  createLoadingPictures,
   generate,
   generateMore,
   generateMoreInNewFork,
@@ -45,6 +44,7 @@ export {
 export type { SessionSummary, SummaryReadResult } from './session/summary'
 // Re-export summary operations from session/summary.ts
 export { deleteSessionSummary, generateSessionSummary, getSessionSummary } from './session/summary'
+export { createLoadingPictures } from './session/pictures'
 // Re-export thread operations from session/threads.ts
 export {
   compressAndCreateThread,

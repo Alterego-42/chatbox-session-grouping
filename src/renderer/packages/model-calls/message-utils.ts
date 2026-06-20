@@ -1,5 +1,6 @@
 import type { Message, MessageContentParts, MessageToolCallPart } from '@shared/types'
 import type { ModelDependencies } from '@shared/types/adapters'
+import type { ReasoningPart } from '@ai-sdk/provider-utils'
 import type { FilePart, ImagePart, ModelMessage, TextPart, ToolCallPart } from 'ai'
 import type { JSONValue } from '@ai-sdk/provider'
 import dayjs from 'dayjs'
@@ -30,7 +31,11 @@ function stringifyErrorResult(result: unknown): string {
     const obj = result as Record<string, unknown>
     if (typeof obj.message === 'string') return obj.message
     if (typeof obj.error === 'string') return obj.error
-    try { return JSON.stringify(result) } catch { /* fall through */ }
+    try {
+      return JSON.stringify(result)
+    } catch {
+      /* fall through */
+    }
   }
   return String(result)
 }
@@ -73,9 +78,10 @@ async function convertUserContentParts(
 
 async function convertAssistantContentParts(
   contentParts: MessageContentParts,
-  dependencies: ModelDependencies
-): Promise<Array<TextPart | FilePart | ToolCallPart>> {
-  const results: Array<TextPart | FilePart | ToolCallPart | null> = await Promise.all(
+  dependencies: ModelDependencies,
+  options?: { preserveReasoning?: boolean }
+): Promise<Array<TextPart | FilePart | ToolCallPart | ReasoningPart>> {
+  const results: Array<TextPart | FilePart | ToolCallPart | ReasoningPart | null> = await Promise.all(
     contentParts.map(async (c) => {
       if (c.type === 'tool-call') {
         if (c.state === 'call') return null
@@ -89,6 +95,14 @@ async function convertAssistantContentParts(
       if (c.type === 'text') {
         return { type: 'text', text: c.text } as TextPart
       }
+      // Reasoning is opt-in per provider. DeepSeek V4 thinking mode requires it on every
+      // assistant turn, but other providers reject (xAI Grok 400s on unknown
+      // `reasoning_content`) or merge it into text content (Mistral concatenates without
+      // a separator). Default off keeps prior behavior; orchestration enables it for DeepSeek.
+      if (c.type === 'reasoning') {
+        if (!options?.preserveReasoning || !c.text) return null
+        return { type: 'reasoning', text: c.text } satisfies ReasoningPart
+      }
       if (c.type === 'image') {
         const resolved = await resolveImageData(c.storageKey, dependencies)
         if (!resolved) return null
@@ -97,7 +111,7 @@ async function convertAssistantContentParts(
       return null
     })
   )
-  return results.filter((r): r is TextPart | FilePart | ToolCallPart => r !== null)
+  return results.filter((r): r is TextPart | FilePart | ToolCallPart | ReasoningPart => r !== null)
 }
 
 /**
@@ -108,14 +122,15 @@ async function convertAssistantContentParts(
 async function emitAssistantMessages(
   contentParts: MessageContentParts,
   dependencies: ModelDependencies,
-  output: ModelMessage[]
+  output: ModelMessage[],
+  options?: { preserveReasoning?: boolean }
 ): Promise<void> {
   const toolCallIndices = contentParts
     .map((c, i) => (c.type === 'tool-call' && c.state !== 'call' ? i : -1))
     .filter((i) => i !== -1)
 
   if (toolCallIndices.length === 0) {
-    const converted = await convertAssistantContentParts(contentParts, dependencies)
+    const converted = await convertAssistantContentParts(contentParts, dependencies, options)
     if (converted.length > 0) {
       output.push({ role: 'assistant' as const, content: converted })
     }
@@ -125,7 +140,7 @@ async function emitAssistantMessages(
   let cursor = 0
   for (const tcIdx of toolCallIndices) {
     const segment = contentParts.slice(cursor, tcIdx + 1)
-    const converted = await convertAssistantContentParts(segment, dependencies)
+    const converted = await convertAssistantContentParts(segment, dependencies, options)
     if (converted.length > 0) {
       output.push({ role: 'assistant' as const, content: converted })
     }
@@ -151,7 +166,7 @@ async function emitAssistantMessages(
 
   if (cursor < contentParts.length) {
     const remaining = contentParts.slice(cursor)
-    const converted = await convertAssistantContentParts(remaining, dependencies)
+    const converted = await convertAssistantContentParts(remaining, dependencies, options)
     if (converted.length > 0) {
       output.push({ role: 'assistant' as const, content: converted })
     }
@@ -160,7 +175,7 @@ async function emitAssistantMessages(
 
 export async function convertToModelMessages(
   messages: Message[],
-  options?: { modelSupportVision: boolean }
+  options?: { modelSupportVision: boolean; preserveReasoning?: boolean }
 ): Promise<ModelMessage[]> {
   const dependencies = await createModelDependencies()
   const output: ModelMessage[] = []
@@ -182,7 +197,9 @@ export async function convertToModelMessages(
         break
       }
       case 'assistant':
-        await emitAssistantMessages(m.contentParts || [], dependencies, output)
+        await emitAssistantMessages(m.contentParts || [], dependencies, output, {
+          preserveReasoning: options?.preserveReasoning,
+        })
         break
       case 'tool':
         // Tool results are now handled inline from assistant message tool-call parts
@@ -213,7 +230,7 @@ export function injectModelSystemPrompt(
     'YYYY-MM-DD'
   )}\n Additional info for this conversation: ${additionalInfo}\n\n`
   let hasInjected = false
-  return messages.map((m) => {
+  const injectedMessages = messages.map((m) => {
     if (m.role === role && !hasInjected) {
       m = cloneMessage(m) // 复制，防止原始数据在其他地方被直接渲染使用
       m.contentParts = [{ type: 'text', text: metadataPrompt + getMessageText(m) }]
@@ -221,4 +238,15 @@ export function injectModelSystemPrompt(
     }
     return m
   })
+
+  if (!hasInjected) {
+    injectedMessages.unshift({
+      id: `injected-system-prompt-${dayjs().valueOf()}`,
+      role,
+      timestamp: Date.now(),
+      contentParts: [{ type: 'text', text: metadataPrompt.trimEnd() }],
+    })
+  }
+
+  return injectedMessages
 }
