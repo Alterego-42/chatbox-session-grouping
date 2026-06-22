@@ -147,6 +147,59 @@ export async function refreshSessionListCache() {
   })
 }
 
+// MARK: group-scoped session list (file-explorer view)
+
+const UNGROUPED_QUERY_KEY = '__ungrouped__'
+
+/** Query key for one group's paginated sessions (groupId null = ungrouped root). */
+export const groupSessionsQueryKey = (groupId: string | null) =>
+  ['chat-sessions-list', 'group', groupId ?? UNGROUPED_QUERY_KEY] as const
+
+async function _listSessionsByGroupPage(groupId: string | null, cursor: number | null): Promise<SessionMetaPage> {
+  const metaStorage = await getMetaStorage()
+  return await metaStorage.getPageByGroup(groupId, cursor)
+}
+
+function groupSessionsQueryOptions(groupId: string | null) {
+  return {
+    queryKey: groupSessionsQueryKey(groupId),
+    queryFn: ({ pageParam }: { pageParam: number | null }) => _listSessionsByGroupPage(groupId, pageParam),
+    getNextPageParam: (lastPage: SessionMetaPage) => lastPage.nextCursor,
+    initialPageParam: null as number | null,
+    staleTime: Infinity,
+  }
+}
+
+/** Real-paginated sessions for one group (null = ungrouped root) — the file-explorer main panel. */
+export function useSessionListByGroup(groupId: string | null) {
+  const result = useInfiniteQuery(groupSessionsQueryOptions(groupId))
+  const sessionMetaList = useMemo(() => result.data?.pages.flatMap((p) => p.items), [result.data])
+  return {
+    sessionMetaList,
+    total: result.data?.pages[0]?.total ?? 0,
+    refetch: result.refetch,
+    fetchNextPage: result.fetchNextPage,
+    hasNextPage: result.hasNextPage,
+    isFetchingNextPage: result.isFetchingNextPage,
+    isLoading: result.isLoading,
+  }
+}
+
+/** Direct-session count for a group (null = ungrouped) — used for tree/rail badges. */
+export function useGroupSessionCount(groupId: string | null) {
+  const { data } = useQuery({
+    queryKey: ['chat-sessions-list', 'group-count', groupId ?? UNGROUPED_QUERY_KEY],
+    queryFn: async () => (await getMetaStorage()).getTotalByGroup(groupId),
+    staleTime: Infinity,
+  })
+  return data ?? 0
+}
+
+/** Invalidate every session-list query (global + per-group + counts) after a mutation. */
+export function invalidateSessionLists() {
+  return queryClient.invalidateQueries({ queryKey: QueryKeys.ChatSessionsList })
+}
+
 // MARK: session operations
 
 // get session

@@ -54,6 +54,7 @@ vi.mock('./chatStore', () => ({
   listSessionsMeta: async () => storageState.sessions,
   getMetaStorage: async () => metaStorageMock,
   updateSessionListData: (updater: (items: SessionMeta[]) => SessionMeta[]) => updateSessionListDataMock(updater),
+  invalidateSessionLists: async () => {},
 }))
 
 async function importFresh() {
@@ -154,11 +155,14 @@ describe('groupStore', () => {
     expect(storageState.groups.find((x) => x.id === g.id)).toBeUndefined()
   })
 
-  it('createGroup rejects parentId pointing to a non-root group', async () => {
+  it('createGroup allows nesting up to 4 levels deep and rejects a 5th', async () => {
     const mod = await importFresh()
-    const root = await mod.createGroup({ name: 'root' })
-    const child = await mod.createGroup({ name: 'child', parentId: root.id })
-    await expect(mod.createGroup({ name: 'grand', parentId: child.id })).rejects.toThrow(/only one level/)
+    const l1 = await mod.createGroup({ name: 'L1' })
+    const l2 = await mod.createGroup({ name: 'L2', parentId: l1.id })
+    const l3 = await mod.createGroup({ name: 'L3', parentId: l2.id })
+    const l4 = await mod.createGroup({ name: 'L4', parentId: l3.id })
+    expect(l4.parentId).toBe(l3.id)
+    await expect(mod.createGroup({ name: 'L5', parentId: l4.id })).rejects.toThrow(/max nesting depth/)
   })
 
   it('updateGroup rejects parentId === id (self-loop)', async () => {
@@ -167,20 +171,40 @@ describe('groupStore', () => {
     await expect(mod.updateGroup(g.id, { parentId: g.id })).rejects.toThrow(/cannot set parentId to self/)
   })
 
-  it('updateGroup rejects parentId pointing to a non-root group', async () => {
+  it('updateGroup allows nesting under a deeper group within the depth limit', async () => {
     const mod = await importFresh()
     const root = await mod.createGroup({ name: 'root' })
     const child = await mod.createGroup({ name: 'child', parentId: root.id })
     const other = await mod.createGroup({ name: 'other' })
-    await expect(mod.updateGroup(other.id, { parentId: child.id })).rejects.toThrow(/only one level/)
+    // root/child/other = depth 3, within the limit
+    await expect(mod.updateGroup(other.id, { parentId: child.id })).resolves.toBeUndefined()
+    expect((await mod.listGroups()).find((g) => g.id === other.id)?.parentId).toBe(child.id)
   })
 
-  it('updateGroup rejects nesting a group that still owns children', async () => {
+  it('updateGroup rejects a reparent that would exceed the max depth', async () => {
+    const mod = await importFresh()
+    const l1 = await mod.createGroup({ name: 'L1' })
+    const l2 = await mod.createGroup({ name: 'L2', parentId: l1.id })
+    const l3 = await mod.createGroup({ name: 'L3', parentId: l2.id })
+    const l4 = await mod.createGroup({ name: 'L4', parentId: l3.id })
+    const other = await mod.createGroup({ name: 'other' })
+    await expect(mod.updateGroup(other.id, { parentId: l4.id })).rejects.toThrow(/exceed the max depth/)
+  })
+
+  it('updateGroup allows nesting a group that has children when depth stays within the limit', async () => {
     const mod = await importFresh()
     const a = await mod.createGroup({ name: 'A' })
-    const b = await mod.createGroup({ name: 'B' })
     await mod.createGroup({ name: 'A-child', parentId: a.id })
-    await expect(mod.updateGroup(a.id, { parentId: b.id })).rejects.toThrow(/still owns children/)
+    const b = await mod.createGroup({ name: 'B' })
+    // B/A/A-child = depth 3, within the limit
+    await expect(mod.updateGroup(a.id, { parentId: b.id })).resolves.toBeUndefined()
+  })
+
+  it('updateGroup rejects nesting a group under its own descendant (cycle)', async () => {
+    const mod = await importFresh()
+    const a = await mod.createGroup({ name: 'A' })
+    const child = await mod.createGroup({ name: 'A-child', parentId: a.id })
+    await expect(mod.updateGroup(a.id, { parentId: child.id })).rejects.toThrow(/descendant/)
   })
 
   it('updateGroup happy path: reparent a leaf root under another root, then un-nest', async () => {

@@ -21,6 +21,7 @@ export async function moveSessionToGroup(
       sortIndex: insertIndex,
     }
   })
+  await chatStore.invalidateSessionLists()
 }
 
 export async function reorderWithinGroup(groupId: string | null, oldIndex: number, newIndex: number): Promise<void> {

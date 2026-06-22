@@ -40,13 +40,11 @@ const updateSessionListMock = vi.fn(async (updater: UpdaterFn<SessionMeta[]>) =>
   storageState.sessions = updater(storageState.sessions)
 })
 
-const updateSessionMock = vi.fn(
-  async (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
-    storageState.sessions = storageState.sessions.map((s) =>
-      s.id === sessionId ? ({ ...s, ...updater(s) } as SessionMeta) : s
-    )
-  }
-)
+const updateSessionMock = vi.fn(async (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
+  storageState.sessions = storageState.sessions.map((s) =>
+    s.id === sessionId ? ({ ...s, ...updater(s) } as SessionMeta) : s
+  )
+})
 
 const metaStorageMock = {
   update: vi.fn(async (id: string, patch: Partial<SessionMeta>) => {
@@ -64,6 +62,7 @@ vi.mock('../chatStore', () => ({
   },
   listSessionsMeta: async () => storageState.sessions,
   getMetaStorage: async () => metaStorageMock,
+  invalidateSessionLists: async () => {},
 }))
 
 const updateGroupListMock = vi.fn(async (updater: UpdaterFn<SessionGroup[]>) => {

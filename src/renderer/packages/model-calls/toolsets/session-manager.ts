@@ -151,7 +151,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
   })
 
   const create_group = tool({
-    description: 'Create a new sidebar group. Optional parentId (one nesting level) and hex color.',
+    description: 'Create a new sidebar group. Optional parentId (groups may nest up to 4 levels deep) and hex color.',
     inputSchema: z.object({
       name: z.string().min(1),
       parentId: z.string().nullable().optional(),
@@ -229,7 +229,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
   })
 
   const set_group_parent = tool({
-    description: 'Set or clear a group parent (one nesting level only). Pass null to un-nest.',
+    description: 'Set or clear a group parent (groups may nest up to 4 levels deep). Pass null to un-nest.',
     inputSchema: z.object({ groupId: z.string(), parentId: z.string().nullable() }),
     execute: async (input: { groupId: string; parentId: string | null }) => {
       const groups = await groupStore.listGroups()

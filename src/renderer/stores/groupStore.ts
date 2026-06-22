@@ -13,6 +13,45 @@ const QueryKeys = {
   SessionGroupsList: ['session-groups-list'] as const,
 }
 
+/** Maximum group nesting depth (root groups are depth 1). */
+export const MAX_GROUP_DEPTH = 4
+
+/** 1-based depth of a group within the tree (root groups = 1). */
+function groupDepth(groups: SessionGroup[], id: string): number {
+  const byId = new Map(groups.map((g) => [g.id, g]))
+  let depth = 1
+  let current = byId.get(id)
+  const seen = new Set<string>()
+  while (current && current.parentId !== null && !seen.has(current.id)) {
+    seen.add(current.id)
+    const parent = byId.get(current.parentId)
+    if (!parent) break
+    depth += 1
+    current = parent
+  }
+  return depth
+}
+
+/** Height of a group's subtree: 0 for a leaf, +1 per level of descendants. */
+function subtreeHeight(groups: SessionGroup[], id: string): number {
+  const children = groups.filter((g) => g.parentId === id)
+  if (children.length === 0) return 0
+  return 1 + Math.max(...children.map((c) => subtreeHeight(groups, c.id)))
+}
+
+/** True if `maybeDescendantId` sits anywhere under `ancestorId`. */
+function isDescendantOf(groups: SessionGroup[], ancestorId: string, maybeDescendantId: string): boolean {
+  const byId = new Map(groups.map((g) => [g.id, g]))
+  let current = byId.get(maybeDescendantId)
+  const seen = new Set<string>()
+  while (current && current.parentId !== null && !seen.has(current.id)) {
+    if (current.parentId === ancestorId) return true
+    seen.add(current.id)
+    current = byId.get(current.parentId)
+  }
+  return false
+}
+
 async function _listGroups(): Promise<SessionGroup[]> {
   console.debug('groupStore', 'listGroups')
   try {
@@ -72,8 +111,10 @@ export async function createGroup(input: {
         validationError = new Error(`createGroup: parentId "${parentId}" does not exist`)
         return existing
       }
-      if (parent.parentId !== null) {
-        validationError = new Error(`createGroup: parentId "${parentId}" is itself nested; only one level of nesting is allowed`)
+      if (groupDepth(existing, parentId) >= MAX_GROUP_DEPTH) {
+        validationError = new Error(
+          `createGroup: parentId "${parentId}" is already at the max nesting depth (${MAX_GROUP_DEPTH})`
+        )
         return existing
       }
     }
@@ -116,16 +157,14 @@ export async function updateGroup(id: string, patch: Partial<Omit<SessionGroup, 
           validationError = new Error(`updateGroup: parentId "${newParentId}" does not exist`)
           return existing
         }
-        if (parent.parentId !== null) {
-          validationError = new Error(
-            `updateGroup: parentId "${newParentId}" is itself nested; only one level of nesting is allowed`
-          )
+        if (isDescendantOf(existing, id, newParentId)) {
+          validationError = new Error(`updateGroup: cannot nest "${id}" under its own descendant "${newParentId}"`)
           return existing
         }
-        const hasChildren = existing.some((g) => g.parentId === id)
-        if (hasChildren) {
+        const resultingDepth = groupDepth(existing, newParentId) + 1 + subtreeHeight(existing, id)
+        if (resultingDepth > MAX_GROUP_DEPTH) {
           validationError = new Error(
-            `updateGroup: group "${id}" still owns children; un-nest them before nesting this group`
+            `updateGroup: nesting "${id}" under "${newParentId}" would exceed the max depth (${MAX_GROUP_DEPTH})`
           )
           return existing
         }
@@ -156,4 +195,5 @@ export async function deleteGroup(id: string): Promise<void> {
     const existing = groups ?? []
     return existing.filter((g) => g.id !== id)
   })
+  await chatStore.invalidateSessionLists()
 }
