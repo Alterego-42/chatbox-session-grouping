@@ -136,6 +136,8 @@ export function updateSessionListData(updater: (items: SessionMetaRecord[]) => S
       pageParams: [0],
     }
   })
+  // Keep the file-explorer per-group views in sync with any optimistic global-list change.
+  invalidateSessionLists()
 }
 
 /** Re-read the first session list page from DB and update cache. Use for bulk operations only. */
@@ -145,6 +147,7 @@ export async function refreshSessionListCache() {
     pages: [firstPage],
     pageParams: [0],
   })
+  invalidateSessionLists()
 }
 
 // MARK: group-scoped session list (file-explorer view)
@@ -195,9 +198,11 @@ export function useGroupSessionCount(groupId: string | null) {
   return data ?? 0
 }
 
-/** Invalidate every session-list query (global + per-group + counts) after a mutation. */
+/** Refresh the per-group explorer queries (group lists + counts) after a session mutation. The
+ * global infinite list keeps its own optimistic updates, so it is intentionally left untouched. */
 export function invalidateSessionLists() {
-  return queryClient.invalidateQueries({ queryKey: QueryKeys.ChatSessionsList })
+  void queryClient.invalidateQueries({ queryKey: ['chat-sessions-list', 'group'] })
+  void queryClient.invalidateQueries({ queryKey: ['chat-sessions-list', 'group-count'] })
 }
 
 // MARK: session operations

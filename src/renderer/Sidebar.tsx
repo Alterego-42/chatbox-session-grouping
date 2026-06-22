@@ -22,6 +22,7 @@ import SessionAttachmentRagDevPane from './components/dev/SessionAttachmentRagDe
 import ThemeSwitchButton from './components/dev/ThemeSwitchButton'
 import GroupedSessionList from './components/session/GroupedSessionList'
 import GroupRail from './components/session/GroupRail'
+import ManagerSessionPin from './components/session/ManagerSessionPin'
 import TaskSessionList from './components/session/TaskSessionList'
 import { FORCE_ENABLE_DEV_PAGES } from './dev/devToolsConfig'
 import useNeedRoomForMacWinControls from './hooks/useNeedRoomForWinControls'
@@ -220,10 +221,15 @@ export default function Sidebar() {
         {sidebarMode === 'task' && featureFlags.taskMode ? (
           <TaskSessionList />
         ) : (
-          <Flex flex={1} style={{ minHeight: 0 }}>
-            <GroupRail />
-            <GroupedSessionList sessionListViewportRef={sessionListViewportRef} />
-          </Flex>
+          <>
+            <Flex flex={1} style={{ minHeight: 0 }}>
+              <GroupRail />
+              <GroupedSessionList sessionListViewportRef={sessionListViewportRef} />
+            </Flex>
+            <Box px="xs" pb={4}>
+              <ManagerSessionPin />
+            </Box>
+          </>
         )}
 
         <SidebarUpdateBanner />

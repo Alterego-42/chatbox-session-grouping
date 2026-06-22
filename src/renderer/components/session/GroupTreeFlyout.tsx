@@ -23,7 +23,7 @@ import { duplicateGroup } from '@/stores/session/groups'
 import { add as addToast } from '@/stores/toastActions'
 import { buildGroupTree, type GroupTreeNode } from '@/utils/group-tree'
 
-const INDENT_PX = 14
+const INDENT_PX = 18
 
 /** The nested group tree shown in the rail flyout. Clicking a group "enters" it (onNavigate closes the flyout). */
 export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => void }) {
@@ -91,9 +91,9 @@ function UngroupedRow({ active, onEnter }: { active: boolean; onEnter: () => voi
       depth={1}
       active={active}
       onClick={onEnter}
-      icon={<IconInbox size={16} className="shrink-0 text-chatbox-tertiary" />}
+      icon={<IconInbox size={18} className="shrink-0 text-chatbox-tertiary" />}
       label={
-        <Text span size="sm" lineClamp={1} c="chatbox-primary">
+        <Text span size="sm" fw={600} lineClamp={1} c="chatbox-primary">
           {t('Ungrouped')}
         </Text>
       }
@@ -145,16 +145,25 @@ function GroupRow(props: GroupRowProps) {
         }
         icon={
           <IconFolder
-            size={16}
+            size={depth === 1 ? 18 : 15}
             className="shrink-0"
-            style={{ color: group.color || 'var(--mantine-color-chatbox-tertiary-text)' }}
+            style={{
+              color: group.color || 'var(--mantine-color-chatbox-tertiary-text)',
+              opacity: depth === 1 ? 1 : 0.85,
+            }}
           />
         }
         label={
           renaming ? (
             <RenameInput group={group} onDone={() => setRenamingId(null)} />
           ) : (
-            <Text span size="sm" lineClamp={1} c="chatbox-primary">
+            <Text
+              span
+              size={depth <= 2 ? 'sm' : 'xs'}
+              fw={depth === 1 ? 600 : depth === 2 ? 500 : 400}
+              lineClamp={1}
+              c="chatbox-primary"
+            >
               {group.name}
             </Text>
           )
