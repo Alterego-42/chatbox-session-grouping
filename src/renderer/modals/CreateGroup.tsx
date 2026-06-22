@@ -6,7 +6,7 @@ import { AdaptiveModal } from '@/components/common/AdaptiveModal'
 import { createGroup } from '@/stores/groupStore'
 import { add as addToast } from '@/stores/toastActions'
 
-const CreateGroup = NiceModal.create(() => {
+const CreateGroup = NiceModal.create(({ parentId = null }: { parentId?: string | null } = {}) => {
   const modal = useModal()
   const { t } = useTranslation()
   const [name, setName] = useState('')
@@ -22,7 +22,7 @@ const CreateGroup = NiceModal.create(() => {
     if (!trimmed || submitting) return
     setSubmitting(true)
     try {
-      await createGroup({ name: trimmed })
+      await createGroup({ name: trimmed, parentId })
       onClose()
     } catch (error) {
       addToast(error instanceof Error ? error.message : String(error))
@@ -39,7 +39,12 @@ const CreateGroup = NiceModal.create(() => {
   }
 
   return (
-    <AdaptiveModal opened={modal.visible} onClose={onClose} title={t('New group')} size="sm">
+    <AdaptiveModal
+      opened={modal.visible}
+      onClose={onClose}
+      title={parentId ? t('New subgroup') : t('New group')}
+      size="sm"
+    >
       <Stack gap="md">
         <TextInput
           autoFocus

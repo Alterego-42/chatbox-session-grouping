@@ -1023,5 +1023,8 @@
   "Default Summary Model": "Default Summary Model",
   "Chatbox will use this model to generate session summaries.": "Chatbox will use this model to generate session summaries.",
   "Summary Concurrency": "Summary Concurrency",
-  "How many session summaries the AI manager generates in parallel. On repeated failures it automatically falls back to 3, then 1.": "How many session summaries the AI manager generates in parallel. On repeated failures it automatically falls back to 3, then 1."
+  "How many session summaries the AI manager generates in parallel. On repeated failures it automatically falls back to 3, then 1.": "How many session summaries the AI manager generates in parallel. On repeated failures it automatically falls back to 3, then 1.",
+  "Groups": "Groups",
+  "New subgroup": "New subgroup",
+  "No chats here yet": "No chats here yet"
 }

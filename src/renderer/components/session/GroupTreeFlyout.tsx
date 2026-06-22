@@ -1,0 +1,317 @@
+import NiceModal from '@ebay/nice-modal-react'
+import { ActionIcon, Box, Flex, Menu, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
+import type { SessionGroup } from '@shared/types'
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconCopy,
+  IconDots,
+  IconFolder,
+  IconFolderPlus,
+  IconInbox,
+  IconPalette,
+  IconPencil,
+  IconTrash,
+} from '@tabler/icons-react'
+import { useAtom } from 'jotai'
+import { type KeyboardEvent, useCallback, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { currentSidebarGroupIdAtom, expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
+import { useGroupSessionCount } from '@/stores/chatStore'
+import { deleteGroup, MAX_GROUP_DEPTH, updateGroup, useGroups } from '@/stores/groupStore'
+import { duplicateGroup } from '@/stores/session/groups'
+import { add as addToast } from '@/stores/toastActions'
+import { buildGroupTree, type GroupTreeNode } from '@/utils/group-tree'
+
+const INDENT_PX = 14
+
+/** The nested group tree shown in the rail flyout. Clicking a group "enters" it (onNavigate closes the flyout). */
+export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => void }) {
+  const { t } = useTranslation()
+  const { groups } = useGroups()
+  const tree = useMemo(() => buildGroupTree(groups ?? []), [groups])
+  const [currentGroupId, setCurrentGroupId] = useAtom(currentSidebarGroupIdAtom)
+  const [expandedMap, setExpandedMap] = useAtom(expandedGroupsAtom)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+
+  const enter = useCallback(
+    (id: string | null) => {
+      setCurrentGroupId(id)
+      onNavigate?.()
+    },
+    [setCurrentGroupId, onNavigate]
+  )
+  const isExpanded = useCallback((id: string) => expandedMap[id] !== false, [expandedMap])
+  const toggle = useCallback((id: string) => setExpandedMap((m) => ({ ...m, [id]: m[id] === false })), [setExpandedMap])
+
+  return (
+    <Stack gap={2} p="xs">
+      <Flex align="center" justify="space-between" px="xs" pb={2}>
+        <Text size="xs" fw={700} c="chatbox-tertiary" tt="uppercase">
+          {t('Groups')}
+        </Text>
+        <ActionIcon
+          variant="subtle"
+          color="chatbox-tertiary"
+          size={20}
+          aria-label={t('New group') ?? ''}
+          onClick={() => void NiceModal.show('create-group')}
+        >
+          <IconFolderPlus size={16} />
+        </ActionIcon>
+      </Flex>
+
+      <UngroupedRow active={currentGroupId === null} onEnter={() => enter(null)} />
+
+      <ScrollArea.Autosize mah={380} type="hover" scrollbarSize={6}>
+        <Stack gap={2} pr={4}>
+          {tree.map((node) => (
+            <GroupRow
+              key={node.group.id}
+              node={node}
+              currentGroupId={currentGroupId}
+              isExpanded={isExpanded}
+              toggle={toggle}
+              enter={enter}
+              renamingId={renamingId}
+              setRenamingId={setRenamingId}
+            />
+          ))}
+        </Stack>
+      </ScrollArea.Autosize>
+    </Stack>
+  )
+}
+
+function UngroupedRow({ active, onEnter }: { active: boolean; onEnter: () => void }) {
+  const { t } = useTranslation()
+  const count = useGroupSessionCount(null)
+  return (
+    <RowShell
+      depth={1}
+      active={active}
+      onClick={onEnter}
+      icon={<IconInbox size={16} className="shrink-0 text-chatbox-tertiary" />}
+      label={
+        <Text span size="sm" lineClamp={1} c="chatbox-primary">
+          {t('Ungrouped')}
+        </Text>
+      }
+      count={count}
+    />
+  )
+}
+
+interface GroupRowProps {
+  node: GroupTreeNode
+  currentGroupId: string | null
+  isExpanded: (id: string) => boolean
+  toggle: (id: string) => void
+  enter: (id: string) => void
+  renamingId: string | null
+  setRenamingId: (id: string | null) => void
+}
+
+function GroupRow(props: GroupRowProps) {
+  const { node, currentGroupId, isExpanded, toggle, enter, renamingId, setRenamingId } = props
+  const { group, depth, children } = node
+  const count = useGroupSessionCount(group.id)
+  const hasChildren = children.length > 0
+  const expanded = isExpanded(group.id)
+  const active = currentGroupId === group.id
+  const renaming = renamingId === group.id
+
+  return (
+    <>
+      <RowShell
+        depth={depth}
+        active={active}
+        onClick={() => enter(group.id)}
+        chevron={
+          hasChildren ? (
+            <ActionIcon
+              variant="transparent"
+              size={16}
+              color="chatbox-tertiary"
+              aria-label="toggle"
+              onClick={(e) => {
+                e.stopPropagation()
+                toggle(group.id)
+              }}
+            >
+              {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+            </ActionIcon>
+          ) : null
+        }
+        icon={
+          <IconFolder
+            size={16}
+            className="shrink-0"
+            style={{ color: group.color || 'var(--mantine-color-chatbox-tertiary-text)' }}
+          />
+        }
+        label={
+          renaming ? (
+            <RenameInput group={group} onDone={() => setRenamingId(null)} />
+          ) : (
+            <Text span size="sm" lineClamp={1} c="chatbox-primary">
+              {group.name}
+            </Text>
+          )
+        }
+        count={renaming ? undefined : count}
+        actions={renaming ? null : <GroupMenu group={group} depth={depth} onRename={() => setRenamingId(group.id)} />}
+      />
+      {expanded &&
+        children.map((child) => (
+          <GroupRow
+            key={child.group.id}
+            node={child}
+            currentGroupId={currentGroupId}
+            isExpanded={isExpanded}
+            toggle={toggle}
+            enter={enter}
+            renamingId={renamingId}
+            setRenamingId={setRenamingId}
+          />
+        ))}
+    </>
+  )
+}
+
+interface RowShellProps {
+  depth: number
+  active: boolean
+  onClick: () => void
+  icon: React.ReactNode
+  label: React.ReactNode
+  count?: number
+  chevron?: React.ReactNode
+  actions?: React.ReactNode
+}
+
+function RowShell({ depth, active, onClick, icon, label, count, chevron, actions }: RowShellProps) {
+  return (
+    <Flex
+      align="center"
+      gap={4}
+      px="xs"
+      py={4}
+      className={`group/grouprow cursor-pointer rounded-sm ${active ? 'bg-chatbox-background-brand-secondary' : 'hover:bg-chatbox-background-gray-secondary'}`}
+      style={{ paddingLeft: (depth - 1) * INDENT_PX + 8 }}
+      onClick={onClick}
+    >
+      <Box w={16} className="flex shrink-0 items-center justify-center">
+        {chevron}
+      </Box>
+      {icon}
+      <Box flex={1} style={{ minWidth: 0 }}>
+        {label}
+      </Box>
+      {typeof count === 'number' && count > 0 && (
+        <Text span size="xs" c="chatbox-tertiary" className="shrink-0">
+          {count}
+        </Text>
+      )}
+      {actions && <Box className="shrink-0 invisible group-hover/grouprow:visible">{actions}</Box>}
+    </Flex>
+  )
+}
+
+function RenameInput({ group, onDone }: { group: SessionGroup; onDone: () => void }) {
+  const [value, setValue] = useState(group.name)
+  const commit = async () => {
+    const next = value.trim()
+    if (next && next !== group.name) {
+      try {
+        await updateGroup(group.id, { name: next })
+      } catch (err) {
+        addToast(err instanceof Error ? err.message : String(err))
+      }
+    }
+    onDone()
+  }
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void commit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onDone()
+    }
+  }
+  return (
+    <TextInput
+      size="xs"
+      autoFocus
+      value={value}
+      onChange={(e) => setValue(e.currentTarget.value)}
+      onBlur={() => void commit()}
+      onKeyDown={onKeyDown}
+      onClick={(e) => e.stopPropagation()}
+    />
+  )
+}
+
+function GroupMenu({ group, depth, onRename }: { group: SessionGroup; depth: number; onRename: () => void }) {
+  const { t } = useTranslation()
+  const canNest = depth < MAX_GROUP_DEPTH
+  const handleDelete = async () => {
+    const ok = (await NiceModal.show('confirm-dangerous-action', {
+      type: 'delete_group',
+      description: t('Delete group "{{name}}"? Sessions will be moved to Unassigned.', { name: group.name }),
+    })) as boolean
+    if (ok) await deleteGroup(group.id)
+  }
+  return (
+    <Menu position="bottom-end" withinPortal shadow="md" width={190}>
+      <Menu.Target>
+        <ActionIcon
+          variant="transparent"
+          size={18}
+          color="chatbox-tertiary"
+          aria-label={t('Group actions') ?? ''}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <IconDots size={15} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown onClick={(e) => e.stopPropagation()}>
+        {canNest && (
+          <Menu.Item
+            leftSection={<IconFolderPlus size={14} />}
+            onClick={() => void NiceModal.show('create-group', { parentId: group.id })}
+          >
+            {t('New subgroup')}
+          </Menu.Item>
+        )}
+        <Menu.Item leftSection={<IconPencil size={14} />} onClick={onRename}>
+          {t('Rename group')}
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<IconPalette size={14} />}
+          onClick={() => void NiceModal.show('set-group-color', { groupId: group.id })}
+        >
+          {t('Set color')}
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<IconCopy size={14} />}
+          onClick={async () => {
+            try {
+              await duplicateGroup(group.id)
+              addToast(t('Group duplicated'))
+            } catch (err) {
+              addToast(err instanceof Error ? err.message : t('Failed to duplicate group'))
+            }
+          }}
+        >
+          {t('Duplicate group')}
+        </Menu.Item>
+        <Menu.Divider />
+        <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => void handleDelete()}>
+          {t('Delete group')}
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  )
+}

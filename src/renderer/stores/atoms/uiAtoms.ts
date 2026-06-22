@@ -36,3 +36,7 @@ export const collapsedProvidersAtom = atomWithStorage<Record<string, boolean>>('
 
 // key: group.id 或 '__unassigned__'；value 为 false 表示折叠；未设置/true 表示展开
 export const expandedGroupsAtom = atomWithStorage<Record<string, boolean>>('expandedGroups', {})
+
+// The group currently "entered" in the file-explorer sidebar (null = root / ungrouped view).
+// The main panel shows this group's direct sessions; the rail flyout navigates between groups. Persisted.
+export const currentSidebarGroupIdAtom = atomWithStorage<string | null>('currentSidebarGroupId', null)

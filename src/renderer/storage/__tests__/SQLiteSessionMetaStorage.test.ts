@@ -18,7 +18,11 @@ const mockConnection = vi.hoisted(() => ({
 
 vi.mock('@capacitor-community/sqlite', () => ({
   CapacitorSQLite: {},
-  SQLiteConnection: vi.fn(() => mockConnection),
+  // Regular (newable) function impl: `new SQLiteConnection()` must construct under vitest 4, which
+  // Reflect.constructs the implementation — an arrow function there throws "is not a constructor".
+  SQLiteConnection: vi.fn(function SQLiteConnectionMock() {
+    return mockConnection
+  }),
 }))
 
 function makeRecord(overrides: Partial<SessionMetaRecord> & { id: string }): SessionMetaRecord {
