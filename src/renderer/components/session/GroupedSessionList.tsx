@@ -149,7 +149,11 @@ export default function GroupedSessionList({ sessionListViewportRef }: Props) {
           endReached={onEndReached}
           components={virtuosoComponents}
           itemContent={(_index, session) => (
-            <SessionItem selected={routerState.location.pathname === `/session/${session.id}`} session={session} />
+            <SessionItem
+              selected={routerState.location.pathname === `/session/${session.id}`}
+              session={session}
+              restricted={isStarred}
+            />
           )}
         />
       ) : (

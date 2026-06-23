@@ -1,5 +1,5 @@
 import NiceModal from '@ebay/nice-modal-react'
-import { ActionIcon, Box, Flex, Menu, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Box, Divider, Flex, Menu, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
 import type { SessionGroup } from '@shared/types'
 import {
   IconChevronDown,
@@ -47,6 +47,11 @@ export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => voi
 
   return (
     <Stack gap={2} p="xs">
+      <UngroupedRow active={currentGroupId === null} onEnter={() => enter(null)} />
+      <StarredRow active={currentGroupId === STARRED_GROUP_ID} onEnter={() => enter(STARRED_GROUP_ID)} />
+
+      <Divider my={4} />
+
       <Flex align="center" justify="space-between" px="xs" pb={2}>
         <Text size="xs" fw={700} c="chatbox-tertiary" tt="uppercase">
           {t('Groups')}
@@ -61,9 +66,6 @@ export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => voi
           <IconFolderPlus size={16} />
         </ActionIcon>
       </Flex>
-
-      <UngroupedRow active={currentGroupId === null} onEnter={() => enter(null)} />
-      <StarredRow active={currentGroupId === STARRED_GROUP_ID} onEnter={() => enter(STARRED_GROUP_ID)} />
 
       <ScrollArea.Autosize mah={380} type="hover" scrollbarSize={6}>
         <Stack gap={2} pr={4}>
@@ -225,13 +227,21 @@ function RowShell({ depth, active, onClick, icon, label, count, chevron, actions
     <Flex
       align="center"
       gap={4}
-      px="xs"
+      pr="xs"
       py={4}
       className={`group/grouprow cursor-pointer rounded-sm ${active ? 'bg-chatbox-background-brand-secondary' : 'hover:bg-chatbox-background-gray-secondary'}`}
-      style={{ paddingLeft: (depth - 1) * INDENT_PX + 8 }}
       onClick={onClick}
     >
-      <Box w={16} className="flex shrink-0 items-center justify-center">
+      <Box w={6} className="shrink-0" />
+      {Array.from({ length: Math.max(0, depth - 1) }).map((_, i) => (
+        <Box
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional indent guide
+          key={i}
+          className="shrink-0 self-stretch"
+          style={{ width: INDENT_PX, borderLeft: '1px solid var(--mantine-color-default-border)' }}
+        />
+      ))}
+      <Box w={18} className="flex shrink-0 items-center justify-center">
         {chevron}
       </Box>
       {icon}
