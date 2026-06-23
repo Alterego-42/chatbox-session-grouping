@@ -548,27 +548,33 @@ const ImportExportDataSection = () => {
             await storage.setItemNow(key, value)
           }
 
+          // Merge imported groups first so we know which group ids survive. The official Chatbox
+          // format has no session-groups-list — those imports keep the existing groups and land
+          // their sessions in Unassigned.
+          const importedGroupsRaw = importData[StorageKey.SessionGroupsList]
+          const baselineGroups = await storage.getItem<SessionGroup[]>(StorageKey.SessionGroupsList, [])
+          let mergedGroups = baselineGroups ?? []
+          if (Array.isArray(importedGroupsRaw)) {
+            mergedGroups = uniqBy([...(baselineGroups ?? []), ...importedGroupsRaw], 'id')
+            await storage.setItemNow(StorageKey.SessionGroupsList, mergedGroups)
+          }
+          const validGroupIds = new Set(mergedGroups.map((g) => g.id))
+
+          // Import session meta into the DB store. A session whose group was not imported/known
+          // (official format, or a deselected group) falls back to Unassigned.
           if (importedChatSessions) {
             const metaStorage = await getMetaStorage()
             for (const item of importedChatSessions) {
               const existing = await metaStorage.getById(item.id)
-              if (!existing) {
-                await metaStorage.create({
-                  ...item,
-                  sortOrder: item.sortOrder ?? Date.now(),
-                  createdAt: item.createdAt ?? Date.now(),
-                })
-              }
+              if (existing) continue
+              const groupId = item.groupId && validGroupIds.has(item.groupId) ? item.groupId : undefined
+              await metaStorage.create({
+                ...item,
+                groupId,
+                sortOrder: item.sortOrder ?? Date.now(),
+                createdAt: item.createdAt ?? Date.now(),
+              })
             }
-          }
-
-          const importedGroupsRaw = importData[StorageKey.SessionGroupsList]
-          if (Array.isArray(importedGroupsRaw)) {
-            const previousGroups = await storage.getItem<SessionGroup[]>(StorageKey.SessionGroupsList, [])
-            await storage.setItemNow(
-              StorageKey.SessionGroupsList,
-              uniqBy([...previousGroups, ...importedGroupsRaw], 'id')
-            )
           }
 
           // 由于即将重启应用，这里不需要清理loading状态
