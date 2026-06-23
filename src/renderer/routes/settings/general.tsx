@@ -380,21 +380,7 @@ const ImportExportDataSection = () => {
               continue
             }
 
-            // ChatSessionsList: filter by selectedSessionIds and clear dangling groupIds
-            if (key === StorageKey.ChatSessionsList && exportItems.includes(ExportDataItem.Conversations)) {
-              try {
-                const raw = await storage.getItem<SessionMeta[]>(key, [])
-                const groupsRaw = await storage.getItem<SessionGroup[]>(StorageKey.SessionGroupsList, [])
-                const retainedGroups = filterGroupsForExport(groupsRaw ?? [], selectedGroupIds)
-                const retainedGroupIds = new Set(retainedGroups.map((g) => g.id))
-                const filtered = filterSessionsForExport(raw ?? [], selectedSessionIds, retainedGroupIds)
-                yield ','
-                yield `"${key}":${JSON.stringify(filtered)}`
-              } catch (error) {
-                console.warn(`Failed to export key ${key}:`, error)
-              }
-              continue
-            }
+            // (Session meta lives in the DB now — it is exported, selection-filtered, after this loop.)
 
             // session:* entries: skip any whose id is not selected
             if (key.startsWith('session:') && exportItems.includes(ExportDataItem.Conversations)) {
@@ -480,14 +466,19 @@ const ImportExportDataSection = () => {
           console.error('Failed to get storage keys:', error)
         }
 
-        // Export session meta from DB (no longer in key-value storage)
+        // Export session meta from the DB (no longer in key-value storage), honoring the selective
+        // export filter so the metas match the session:* contents exported above.
         if (exportItems.includes(ExportDataItem.Conversations)) {
           try {
             const metaStorage = await getMetaStorage()
             const allMeta = await metaStorage.getAll()
-            if (allMeta.length > 0) {
+            const groupsRaw = await storage.getItem<SessionGroup[]>(StorageKey.SessionGroupsList, [])
+            const retainedGroups = filterGroupsForExport(groupsRaw ?? [], selectedGroupIds)
+            const retainedGroupIds = new Set(retainedGroups.map((g) => g.id))
+            const filtered = filterSessionsForExport(allMeta, selectedSessionIds, retainedGroupIds)
+            if (filtered.length > 0) {
               yield ','
-              yield `"${StorageKey.ChatSessionsList}":${JSON.stringify(allMeta)}`
+              yield `"${StorageKey.ChatSessionsList}":${JSON.stringify(filtered)}`
             }
           } catch (error) {
             console.error('Failed to export session meta from DB:', error)
