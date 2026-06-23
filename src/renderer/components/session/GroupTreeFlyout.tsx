@@ -1,3 +1,21 @@
+import type { DragEndEvent } from '@dnd-kit/core'
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import NiceModal from '@ebay/nice-modal-react'
 import { ActionIcon, Box, Divider, Flex, Menu, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
 import type { SessionGroup } from '@shared/types'
@@ -20,7 +38,7 @@ import { useTranslation } from 'react-i18next'
 import { currentSidebarGroupIdAtom, expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
 import { useGroupSessionCount, useStarredSessions } from '@/stores/chatStore'
 import { deleteGroup, MAX_GROUP_DEPTH, updateGroup, useGroups } from '@/stores/groupStore'
-import { duplicateGroup } from '@/stores/session/groups'
+import { duplicateGroup, reorderChildGroups, reorderGroups } from '@/stores/session/groups'
 import { add as addToast } from '@/stores/toastActions'
 import { buildGroupTree, type GroupTreeNode, STARRED_GROUP_ID } from '@/utils/group-tree'
 
@@ -45,6 +63,32 @@ export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => voi
   const isExpanded = useCallback((id: string) => expandedMap[id] !== false, [expandedMap])
   const toggle = useCallback((id: string) => setExpandedMap((m) => ({ ...m, [id]: m[id] === false })), [setExpandedMap])
 
+  const sensors = useSensors(
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 10 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+  const rootIds = useMemo(() => tree.map((n) => n.group.id), [tree])
+  const onGroupDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || !groups) return
+    const activeId = String(active.id)
+    const overId = String(over.id)
+    if (activeId === overId) return
+    const a = groups.find((g) => g.id === activeId)
+    const o = groups.find((g) => g.id === overId)
+    // Only reorder among siblings (same parent); cross-level drags are ignored.
+    if (!a || !o || (a.parentId ?? null) !== (o.parentId ?? null)) return
+    const siblings = groups
+      .filter((g) => (g.parentId ?? null) === (a.parentId ?? null))
+      .sort((x, y) => x.sortIndex - y.sortIndex)
+    const oldIndex = siblings.findIndex((g) => g.id === activeId)
+    const newIndex = siblings.findIndex((g) => g.id === overId)
+    if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return
+    if (a.parentId === null) await reorderGroups(oldIndex, newIndex)
+    else await reorderChildGroups(a.parentId, oldIndex, newIndex)
+  }
+
   return (
     <Stack gap={2} p="xs">
       <UngroupedRow active={currentGroupId === null} onEnter={() => enter(null)} />
@@ -67,22 +111,31 @@ export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => voi
         </ActionIcon>
       </Flex>
 
-      <ScrollArea.Autosize mah={380} type="hover" scrollbarSize={6}>
-        <Stack gap={2} pr={4}>
-          {tree.map((node) => (
-            <GroupRow
-              key={node.group.id}
-              node={node}
-              currentGroupId={currentGroupId}
-              isExpanded={isExpanded}
-              toggle={toggle}
-              enter={enter}
-              renamingId={renamingId}
-              setRenamingId={setRenamingId}
-            />
-          ))}
-        </Stack>
-      </ScrollArea.Autosize>
+      <DndContext
+        sensors={sensors}
+        modifiers={[restrictToVerticalAxis]}
+        collisionDetection={closestCenter}
+        onDragEnd={onGroupDragEnd}
+      >
+        <ScrollArea.Autosize mah={380} type="hover" scrollbarSize={6}>
+          <SortableContext items={rootIds} strategy={verticalListSortingStrategy}>
+            <Stack gap={2} pr={4}>
+              {tree.map((node) => (
+                <GroupRow
+                  key={node.group.id}
+                  node={node}
+                  currentGroupId={currentGroupId}
+                  isExpanded={isExpanded}
+                  toggle={toggle}
+                  enter={enter}
+                  renamingId={renamingId}
+                  setRenamingId={setRenamingId}
+                />
+              ))}
+            </Stack>
+          </SortableContext>
+        </ScrollArea.Autosize>
+      </DndContext>
     </Stack>
   )
 }
@@ -143,70 +196,84 @@ function GroupRow(props: GroupRowProps) {
   const expanded = isExpanded(group.id)
   const active = currentGroupId === group.id
   const renaming = renamingId === group.id
+  const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
+    id: group.id,
+    disabled: renaming,
+  })
+  const dndStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : undefined,
+  }
 
   return (
     <>
-      <RowShell
-        depth={depth}
-        active={active}
-        onClick={() => enter(group.id)}
-        chevron={
-          hasChildren ? (
-            <ActionIcon
-              variant="transparent"
-              size={16}
-              color="chatbox-tertiary"
-              aria-label="toggle"
-              onClick={(e) => {
-                e.stopPropagation()
-                toggle(group.id)
+      <div ref={setNodeRef} style={dndStyle} {...attributes} {...listeners}>
+        <RowShell
+          depth={depth}
+          active={active}
+          onClick={() => enter(group.id)}
+          chevron={
+            hasChildren ? (
+              <ActionIcon
+                variant="transparent"
+                size={16}
+                color="chatbox-tertiary"
+                aria-label="toggle"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggle(group.id)
+                }}
+              >
+                {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+              </ActionIcon>
+            ) : null
+          }
+          icon={
+            <IconFolder
+              size={depth === 1 ? 18 : 15}
+              className="shrink-0"
+              style={{
+                color: group.color || 'var(--mantine-color-chatbox-tertiary-text)',
+                opacity: depth === 1 ? 1 : 0.85,
               }}
-            >
-              {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-            </ActionIcon>
-          ) : null
-        }
-        icon={
-          <IconFolder
-            size={depth === 1 ? 18 : 15}
-            className="shrink-0"
-            style={{
-              color: group.color || 'var(--mantine-color-chatbox-tertiary-text)',
-              opacity: depth === 1 ? 1 : 0.85,
-            }}
-          />
-        }
-        label={
-          renaming ? (
-            <RenameInput group={group} onDone={() => setRenamingId(null)} />
-          ) : (
-            <Text
-              span
-              size={depth <= 2 ? 'sm' : 'xs'}
-              fw={depth === 1 ? 600 : depth === 2 ? 500 : 400}
-              lineClamp={1}
-              c="chatbox-primary"
-            >
-              {group.name}
-            </Text>
-          )
-        }
-        count={renaming ? undefined : count}
-        actions={renaming ? null : <GroupMenu group={group} depth={depth} onRename={() => setRenamingId(group.id)} />}
-      />
-      {expanded &&
-        children.map((child) => (
-          <GroupRow
-            key={child.group.id}
-            node={child}
-            currentGroupId={currentGroupId}
-            isExpanded={isExpanded}
-            toggle={toggle}
-            enter={enter}
-            renamingId={renamingId}
-            setRenamingId={setRenamingId}
-          />
-        ))}
+            />
+          }
+          label={
+            renaming ? (
+              <RenameInput group={group} onDone={() => setRenamingId(null)} />
+            ) : (
+              <Text
+                span
+                size={depth <= 2 ? 'sm' : 'xs'}
+                fw={depth === 1 ? 600 : depth === 2 ? 500 : 400}
+                lineClamp={1}
+                c="chatbox-primary"
+              >
+                {group.name}
+              </Text>
+            )
+          }
+          count={renaming ? undefined : count}
+          actions={renaming ? null : <GroupMenu group={group} depth={depth} onRename={() => setRenamingId(group.id)} />}
+        />
+      </div>
+      {expanded && hasChildren && (
+        <SortableContext items={children.map((c) => c.group.id)} strategy={verticalListSortingStrategy}>
+          {children.map((child) => (
+            <GroupRow
+              key={child.group.id}
+              node={child}
+              currentGroupId={currentGroupId}
+              isExpanded={isExpanded}
+              toggle={toggle}
+              enter={enter}
+              renamingId={renamingId}
+              setRenamingId={setRenamingId}
+            />
+          ))}
+        </SortableContext>
+      )}
     </>
   )
 }

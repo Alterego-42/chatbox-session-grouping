@@ -5,6 +5,7 @@ export {
   clearConversationList,
   copyAndSwitchSession,
   createEmpty,
+  reorderSessionInGroup,
   reorderSessions,
   switchCurrentSession,
   switchToIndex,
@@ -41,10 +42,10 @@ export {
   scheduleGenerateNameAndThreadName,
   scheduleGenerateThreadName,
 } from './session/naming'
+export { createLoadingPictures } from './session/pictures'
 export type { SessionSummary, SummaryReadResult } from './session/summary'
 // Re-export summary operations from session/summary.ts
 export { deleteSessionSummary, generateSessionSummary, getSessionSummary } from './session/summary'
-export { createLoadingPictures } from './session/pictures'
 // Re-export thread operations from session/threads.ts
 export {
   compressAndCreateThread,
