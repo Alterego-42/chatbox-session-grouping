@@ -30,8 +30,10 @@ export type ConfirmDangerousFn = (action: ConfirmDangerousActionInput) => Promis
 
 const declined = { skipped: true as const, reason: 'user_declined' as const }
 
+// Read the COMPLETE session set straight from storage (getAll), never the paginated
+// React-Query cache — the manager must see every session, not just the loaded pages.
 async function loadVisibleSessions() {
-  const list = await chatStore.listSessionsMeta()
+  const list = await chatStore.listAllSessionsMeta()
   return list.filter((s) => !s.system)
 }
 
@@ -64,7 +66,9 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
   const { confirmDangerous } = opts
 
   const list_sessions = tool({
-    description: 'List chat sessions visible in the sidebar. Optional filter by name substring or groupId.',
+    description:
+      'List ALL chat sessions visible in the sidebar (complete — never paginated or truncated). ' +
+      'Optional filter by name substring or groupId. Returns total (matched), totalVisible (all), and per-session id/name/groupId/starred.',
     inputSchema: z.object({
       query: z.string().optional().describe('Case-insensitive substring of session name.'),
       groupId: z.string().optional().describe('Restrict to sessions in this group id (exact match).'),
@@ -79,10 +83,14 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       })
       return {
         ok: true,
+        complete: true,
+        total: filtered.length,
+        totalVisible: sessions.length,
         sessions: filtered.map((s) => ({
           id: s.id,
           name: s.name,
           groupId: s.groupId ?? null,
+          starred: s.starred ?? false,
           sortIndex: s.sortIndex ?? null,
         })),
       }
@@ -90,18 +98,30 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
   })
 
   const list_groups = tool({
-    description: 'List all sidebar groups with id, name, parentId, color, and sortIndex.',
+    description:
+      'List ALL sidebar groups with id, name, parentId, color, sortIndex, and sessionCount (direct sessions in ' +
+      'that group, excluding sub-groups). Also returns totalSessions, ungroupedCount, and groupCount for the whole sidebar.',
     inputSchema: z.object({}),
     execute: async () => {
       const groups = await groupStore.listGroups()
+      const sessions = await loadVisibleSessions()
+      const directCount = new Map<string | null, number>()
+      for (const s of sessions) {
+        const k = s.groupId ?? null
+        directCount.set(k, (directCount.get(k) ?? 0) + 1)
+      }
       return {
         ok: true,
+        totalSessions: sessions.length,
+        ungroupedCount: directCount.get(null) ?? 0,
+        groupCount: groups.length,
         groups: groups.map((g) => ({
           id: g.id,
           name: g.name,
           parentId: g.parentId,
           color: g.color ?? null,
           sortIndex: g.sortIndex,
+          sessionCount: directCount.get(g.id) ?? 0,
         })),
       }
     },
@@ -142,7 +162,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
     execute: async (input: { sessionId: string }) => {
       const session = await chatStore.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
-      const sessions = await chatStore.listSessionsMeta()
+      const sessions = await chatStore.listAllSessionsMeta()
       const meta = sessions.find((s) => s.id === input.sessionId)
       if (!meta) return { ok: false, error: 'session not found' }
       const created = await _copySession(meta)
