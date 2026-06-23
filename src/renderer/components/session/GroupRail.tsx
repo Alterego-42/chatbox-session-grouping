@@ -1,11 +1,11 @@
 import { ActionIcon, Box, Paper, Stack, Tooltip } from '@mantine/core'
-import { IconFolders, IconInbox } from '@tabler/icons-react'
+import { IconFolders, IconInbox, IconStarFilled } from '@tabler/icons-react'
 import { useAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { currentSidebarGroupIdAtom } from '@/stores/atoms/uiAtoms'
 import { useGroups } from '@/stores/groupStore'
-import { getGroupPath } from '@/utils/group-tree'
+import { getGroupPath, STARRED_GROUP_ID } from '@/utils/group-tree'
 import GroupTreeFlyout from './GroupTreeFlyout'
 
 const RAIL_W = 40
@@ -58,7 +58,9 @@ export default function GroupRail() {
           </ActionIcon>
         </Tooltip>
 
-        {currentGroupId === null ? (
+        {currentGroupId === STARRED_GROUP_ID ? (
+          <IconStarFilled size={14} style={{ color: 'var(--mantine-color-yellow-6)' }} />
+        ) : currentGroupId === null ? (
           <IconInbox size={14} className="text-chatbox-tertiary" />
         ) : (
           path.map((g) => (

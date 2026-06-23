@@ -198,11 +198,25 @@ export function useGroupSessionCount(groupId: string | null) {
   return data ?? 0
 }
 
-/** Refresh the per-group explorer queries (group lists + counts) after a session mutation. The
- * global infinite list keeps its own optimistic updates, so it is intentionally left untouched. */
+/** All starred sessions across groups, newest first — backs the virtual "Starred" pseudo-group. */
+export function useStarredSessions() {
+  const { data } = useQuery({
+    queryKey: ['chat-sessions-list', 'starred'],
+    queryFn: async () => {
+      const all = await (await getMetaStorage()).getAll()
+      return all.filter((s) => s.starred)
+    },
+    staleTime: Infinity,
+  })
+  return { sessionMetaList: data, total: data?.length ?? 0 }
+}
+
+/** Refresh the per-group explorer queries (group lists + counts + starred) after a session mutation.
+ * The global infinite list keeps its own optimistic updates, so it is intentionally left untouched. */
 export function invalidateSessionLists() {
   void queryClient.invalidateQueries({ queryKey: ['chat-sessions-list', 'group'] })
   void queryClient.invalidateQueries({ queryKey: ['chat-sessions-list', 'group-count'] })
+  void queryClient.invalidateQueries({ queryKey: ['chat-sessions-list', 'starred'] })
 }
 
 // MARK: session operations

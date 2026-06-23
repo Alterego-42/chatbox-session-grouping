@@ -1,5 +1,12 @@
 import type { SessionGroup } from '@shared/types'
 
+/**
+ * Sentinel for the virtual "Starred" pseudo-group (not a real SessionGroup). When this is the
+ * entered group, the panel shows all starred sessions across groups, newest first; the node has no
+ * rename/color/duplicate/delete and no new-chat/new-subgroup. Sessions leave it by being un-starred.
+ */
+export const STARRED_GROUP_ID = '__starred__'
+
 export interface GroupTreeNode {
   group: SessionGroup
   depth: number // 1-based: root groups are depth 1

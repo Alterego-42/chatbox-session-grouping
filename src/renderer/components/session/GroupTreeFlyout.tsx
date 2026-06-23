@@ -11,17 +11,18 @@ import {
   IconInbox,
   IconPalette,
   IconPencil,
+  IconStarFilled,
   IconTrash,
 } from '@tabler/icons-react'
 import { useAtom } from 'jotai'
 import { type KeyboardEvent, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { currentSidebarGroupIdAtom, expandedGroupsAtom } from '@/stores/atoms/uiAtoms'
-import { useGroupSessionCount } from '@/stores/chatStore'
+import { useGroupSessionCount, useStarredSessions } from '@/stores/chatStore'
 import { deleteGroup, MAX_GROUP_DEPTH, updateGroup, useGroups } from '@/stores/groupStore'
 import { duplicateGroup } from '@/stores/session/groups'
 import { add as addToast } from '@/stores/toastActions'
-import { buildGroupTree, type GroupTreeNode } from '@/utils/group-tree'
+import { buildGroupTree, type GroupTreeNode, STARRED_GROUP_ID } from '@/utils/group-tree'
 
 const INDENT_PX = 18
 
@@ -62,6 +63,7 @@ export default function GroupTreeFlyout({ onNavigate }: { onNavigate?: () => voi
       </Flex>
 
       <UngroupedRow active={currentGroupId === null} onEnter={() => enter(null)} />
+      <StarredRow active={currentGroupId === STARRED_GROUP_ID} onEnter={() => enter(STARRED_GROUP_ID)} />
 
       <ScrollArea.Autosize mah={380} type="hover" scrollbarSize={6}>
         <Stack gap={2} pr={4}>
@@ -98,6 +100,25 @@ function UngroupedRow({ active, onEnter }: { active: boolean; onEnter: () => voi
         </Text>
       }
       count={count}
+    />
+  )
+}
+
+function StarredRow({ active, onEnter }: { active: boolean; onEnter: () => void }) {
+  const { t } = useTranslation()
+  const { total } = useStarredSessions()
+  return (
+    <RowShell
+      depth={1}
+      active={active}
+      onClick={onEnter}
+      icon={<IconStarFilled size={16} className="shrink-0" style={{ color: 'var(--mantine-color-yellow-6)' }} />}
+      label={
+        <Text span size="sm" fw={600} lineClamp={1} c="chatbox-primary">
+          {t('Starred')}
+        </Text>
+      }
+      count={total}
     />
   )
 }
