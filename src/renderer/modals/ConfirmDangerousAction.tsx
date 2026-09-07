@@ -41,13 +41,7 @@ const ConfirmDangerousAction = NiceModal.create(({ description }: Props) => {
   const confirmLabel = secondsLeft > 0 ? t('Confirm ({{seconds}})', { seconds: secondsLeft }) : t('Confirm')
 
   return (
-    <AdaptiveModal
-      opened={modal.visible}
-      onClose={onCancel}
-      size="md"
-      centered
-      title={t('Confirm dangerous action')}
-    >
+    <AdaptiveModal opened={modal.visible} onClose={onCancel} size="md" centered title={t('Confirm dangerous action')}>
       <Stack gap="xs">
         <Text>{description}</Text>
         <Text size="sm" c="chatbox-tertiary">

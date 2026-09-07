@@ -17,8 +17,8 @@ const layoutOptions: {
   labelKey: string
   Preview: (props: { size?: 'sm' | 'md' }) => React.JSX.Element
 }[] = [
-  { value: 'left', labelKey: 'Classic', Preview: ClassicLayoutPreview },
-  { value: 'bubble', labelKey: 'Bubble', Preview: BubbleLayoutPreview },
+  { value: 'left', labelKey: 'Left-aligned', Preview: ClassicLayoutPreview },
+  { value: 'bubble', labelKey: 'Chat bubbles', Preview: BubbleLayoutPreview },
 ]
 
 export function MessageLayoutSelector({ value, onValueChange, size = 'md', ...props }: MessageLayoutSelectorProps) {
@@ -59,22 +59,19 @@ export function ClassicLayoutPreview({ size = 'md' }: { size?: 'sm' | 'md' }) {
       {/* Row 1: avatar + short message */}
       <Flex gap="xs" align="center">
         <Box className="rounded-full bg-chatbox-tint-brand flex-shrink-0" w={avatarSize} h={avatarSize} />
-        <Flex className="flex-1">
-          <Flex
-            h={avatarSize}
-            w="90%"
-            align="center"
-            justify="center"
-            className="bg-chatbox-background-tertiary rounded-full"
-          >
-            <Box h={lineHeight} w="80%" bg="#ADB5BD" className="rounded-full" />
-          </Flex>
+        <Flex
+          h={avatarSize}
+          w="80%"
+          align="center"
+          justify="center"
+          className="bg-chatbox-background-tertiary rounded-full"
+        >
+          <Box h={lineHeight} w="80%" bg="#ADB5BD" className="rounded-full" />
         </Flex>
       </Flex>
       {/* Row 2: avatar + long message */}
       <Flex align="self-start" gap="xs">
         <Box className="rounded-full bg-chatbox-tint-brand flex-shrink-0" w={avatarSize} h={avatarSize} />
-
         <Stack gap={lineHeight / 2} flex="1">
           <Box h={lineHeight} className="w-full rounded-full bg-chatbox-background-tertiary" />
           <Box h={lineHeight} className="w-full rounded-full bg-chatbox-background-tertiary" />

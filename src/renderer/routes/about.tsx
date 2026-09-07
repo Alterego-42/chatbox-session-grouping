@@ -13,19 +13,9 @@ import {
   Title,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import {
-  IconChevronRight,
-  IconClipboard,
-  IconFileText,
-  IconHome,
-  IconMail,
-  IconMessage2,
-  IconPencil,
-  IconRefresh,
-  IconX,
-} from '@tabler/icons-react'
+import { IconChevronRight, IconFileText, IconHome, IconMessage2, IconPencil, IconRefresh } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, type ReactElement, useState } from 'react'
+import { Fragment, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
 import BrandGithub from '@/components/icons/BrandGithub'
@@ -46,7 +36,7 @@ export const Route = createFileRoute('/about')({
 })
 
 function RouteComponent() {
-  const { t, i18n: _i18n } = useTranslation()
+  const { t } = useTranslation()
   const version = useVersion()
   const language = useLanguage()
   const isSmallScreen = useIsSmallScreen()
@@ -120,11 +110,6 @@ function RouteComponent() {
               link={buildChatboxUrl(`/redirect_app/homepage/${language}`)}
             />
             <ListItem
-              icon={<IconClipboard className="w-full h-full" />}
-              title={t('Survey')}
-              link={_i18n.language === 'zh-Hans' ? 'https://jsj.top/f/fcMYEa' : 'https://jsj.top/f/RUMbvY'}
-            />
-            <ListItem
               icon={<IconPencil className="w-full h-full" />}
               title={t('Feedback')}
               link={buildChatboxUrl(`/redirect_app/feedback/${language}`)}
@@ -133,12 +118,6 @@ function RouteComponent() {
               icon={<IconFileText className="w-full h-full" />}
               title={t('Changelog')}
               link={`https://chatboxai.app/${language.split('-')[0] || 'en'}/help-center/changelog`}
-            />
-            <ListItem
-              icon={<IconMail className="w-full h-full" />}
-              title={t('E-mail')}
-              link={`mailto:hi@chatboxai.com`}
-              value="hi@chatboxai.com"
             />
             <ListItem
               icon={<IconMessage2 className="w-full h-full" />}
@@ -177,7 +156,7 @@ function MobileUpdateHint({ language, needCheckUpdate }: { language: string; nee
         size="xs"
         variant="light"
         color="chatbox-brand"
-        radius="xl"
+        radius="lg"
         className="flex-shrink-0"
         onClick={() => platform.openLink(buildChatboxUrl(`/redirect_app/check_update/${language}`))}
       >
@@ -190,7 +169,7 @@ function MobileUpdateHint({ language, needCheckUpdate }: { language: string; nee
     <Button
       size="xs"
       variant="default"
-      radius="xl"
+      radius="lg"
       className="flex-shrink-0"
       onClick={() => platform.openLink(buildChatboxUrl(`/redirect_app/check_update/${language}`))}
     >
@@ -204,7 +183,6 @@ function DesktopUpdateSection() {
   const status = useUpdateStore((s) => s.status)
   const progress = useUpdateStore((s) => s.progress)
   const updateVersion = useUpdateStore((s) => s.version)
-  const error = useUpdateStore((s) => s.error)
 
   const handleCheck = async () => {
     useUpdateStore.setState({ status: 'checking', error: null })
@@ -233,7 +211,7 @@ function DesktopUpdateSection() {
   switch (status) {
     case 'checking':
       return (
-        <Button size="xs" variant="default" radius="xl" className="flex-shrink-0" loading>
+        <Button size="xs" variant="default" radius="lg" className="flex-shrink-0" loading>
           {t('Checking...')}
         </Button>
       )
@@ -257,7 +235,7 @@ function DesktopUpdateSection() {
           size="xs"
           variant="filled"
           color="chatbox-brand"
-          radius="xl"
+          radius="lg"
           className="flex-shrink-0"
           leftSection={<ScalableIcon icon={IconRefresh} size={14} />}
           onClick={handleInstall}
@@ -274,7 +252,7 @@ function DesktopUpdateSection() {
             <Text size="xs" c="chatbox-error">
               {t('Update failed')}
             </Text>
-            <Button size="xs" variant="default" radius="xl" onClick={handleCheck}>
+            <Button size="xs" variant="default" radius="lg" onClick={handleCheck}>
               {t('Retry')}
             </Button>
           </Flex>
@@ -297,7 +275,7 @@ function DesktopUpdateSection() {
 
     default:
       return (
-        <Button size="xs" variant="default" radius="xl" className="flex-shrink-0" onClick={handleCheck}>
+        <Button size="xs" variant="default" radius="lg" className="flex-shrink-0" onClick={handleCheck}>
           {t('Check Update')}
         </Button>
       )

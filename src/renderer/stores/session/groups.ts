@@ -1,8 +1,10 @@
 import { arrayMove } from '@dnd-kit/sortable'
 import type { SessionGroup } from '@shared/types'
-import * as chatStore from '../chatStore'
+import { rendererApplication } from '@/app/renderer-application'
 import * as groupStore from '../groupStore'
+import { getMetaStorage } from '../sessionHelpers'
 import { _copySession as copySession } from './crud'
+import { invalidateSessionLists } from './group-queries'
 
 function groupKey(groupId: string | null | undefined): string | null {
   return groupId ?? null
@@ -13,19 +15,15 @@ export async function moveSessionToGroup(
   targetGroupId: string | null,
   insertIndex?: number
 ): Promise<void> {
-  await chatStore.updateSession(sessionId, (s) => {
-    if (!s) throw new Error(`moveSessionToGroup: session "${sessionId}" not found`)
-    return {
-      ...s,
-      groupId: targetGroupId === null ? undefined : targetGroupId,
-      sortIndex: insertIndex,
-    }
+  await rendererApplication.sessions.updateSession(sessionId, {
+    groupId: targetGroupId === null ? undefined : targetGroupId,
+    sortIndex: insertIndex,
   })
-  await chatStore.invalidateSessionLists()
+  invalidateSessionLists()
 }
 
 export async function reorderWithinGroup(groupId: string | null, oldIndex: number, newIndex: number): Promise<void> {
-  const inGroup = (await chatStore.listSessionsMeta())
+  const inGroup = (await (await getMetaStorage()).getAll())
     .filter((s) => groupKey(s.groupId) === groupId)
     .sort((a, b) => {
       const ai = a.sortIndex ?? Number.POSITIVE_INFINITY
@@ -37,9 +35,9 @@ export async function reorderWithinGroup(groupId: string | null, oldIndex: numbe
   }
   const reordered = arrayMove(inGroup, oldIndex, newIndex)
   const newSortIndex = new Map(reordered.map((s, i) => [s.id, i] as const))
-  const metaStorage = await chatStore.getMetaStorage()
+  const metaStorage = await getMetaStorage()
   await Promise.all([...newSortIndex].map(([id, sortIndex]) => metaStorage.update(id, { sortIndex })))
-  chatStore.updateSessionListData((items) =>
+  rendererApplication.sessionQueryBridge.updateSessionListData((items) =>
     items.map((it) => (newSortIndex.has(it.id) ? { ...it, sortIndex: newSortIndex.get(it.id) } : it))
   )
 }
@@ -87,7 +85,7 @@ export async function duplicateGroup(groupId: string): Promise<SessionGroup> {
   const childGroups = isRoot ? allGroups.filter((g) => g.parentId === source.id) : []
   const childGroupIds = new Set(childGroups.map((g) => g.id))
 
-  const sessions = await chatStore.listSessionsMeta()
+  const sessions = await rendererApplication.sessions.listAllSessionsMeta()
   const sessionsAtSource = sessions.filter((s) => s.groupId === source.id)
   const sessionsInChildren = sessions.filter((s) => s.groupId && childGroupIds.has(s.groupId))
 

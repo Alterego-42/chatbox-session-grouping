@@ -56,7 +56,7 @@ function createModel(overrides: Partial<ConstructorParameters<typeof OpenAIRespo
 
 describe('OpenAIResponses call settings', () => {
   it('forces store=false for stateless responses while preserving user OpenAI provider options', () => {
-    const openaiResponses = createModel({ forceStatelessResponses: true })
+    const openaiResponses = createModel()
 
     const settings = openaiResponses.exposeCallSettings({
       providerOptions: {
@@ -74,11 +74,67 @@ describe('OpenAIResponses call settings', () => {
     })
   })
 
-  it('does not inject OpenAI provider options when stateless mode is disabled', () => {
+  it('preserves explicit reasoning encrypted content include for Responses reasoning calls', () => {
+    const openaiResponses = createModel()
+
+    const settings = openaiResponses.exposeCallSettings({
+      providerOptions: {
+        openai: {
+          reasoningEffort: 'high',
+          reasoningSummary: 'auto',
+          include: ['reasoning.encrypted_content'],
+          forceReasoning: true,
+        },
+      },
+    })
+
+    expect(settings.providerOptions).toEqual({
+      openai: {
+        reasoningEffort: 'high',
+        reasoningSummary: 'auto',
+        include: ['reasoning.encrypted_content'],
+        forceReasoning: true,
+        store: false,
+      },
+    })
+  })
+
+  it('forces store=false even without user-provided OpenAI provider options', () => {
     const openaiResponses = createModel()
 
     const settings = openaiResponses.exposeCallSettings()
 
-    expect(settings.providerOptions).toBeUndefined()
+    expect(settings.providerOptions).toEqual({
+      openai: {
+        store: false,
+      },
+    })
+  })
+})
+
+describe('OpenAIResponses host normalization', () => {
+  it('keeps a Copilot-style host unchanged when skipHostNormalization is set', () => {
+    const openaiResponses = createModel({
+      apiHost: 'https://api.githubcopilot.com',
+      apiPath: '/responses',
+      skipHostNormalization: true,
+      extraHeaders: { 'Openai-Intent': 'conversation-edits' },
+    })
+
+    expect(openaiResponses.options.apiHost).toBe('https://api.githubcopilot.com')
+    expect(openaiResponses.options.apiPath).toBe('/responses')
+    expect(openaiResponses.options.extraHeaders).toEqual({
+      'Openai-Intent': 'conversation-edits',
+    })
+  })
+
+  it('still appends /v1 for standard OpenAI Responses hosts', () => {
+    const openaiResponses = createModel({
+      apiHost: 'https://api.openai.com',
+      apiPath: '/responses',
+    })
+
+    expect(openaiResponses.options.apiHost).toBe('https://api.openai.com/v1')
+    expect(openaiResponses.options.apiPath).toBe('/responses')
   })
 })

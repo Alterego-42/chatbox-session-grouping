@@ -39,6 +39,7 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
         prompt TEXT NOT NULL,
         reference_images TEXT NOT NULL DEFAULT '[]',
         generated_images TEXT NOT NULL DEFAULT '[]',
+        generated_image_thumbnails TEXT,
         created_at INTEGER NOT NULL,
         model_provider TEXT NOT NULL,
         model_id TEXT NOT NULL,
@@ -50,7 +51,8 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
         error_code TEXT,
         error_item_uuid TEXT,
         task_id TEXT,
-        aspect_ratio TEXT
+        aspect_ratio TEXT,
+        source TEXT
       )
     `)
 
@@ -58,6 +60,8 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
     await this.addColumnIfNotExists('task_id', 'TEXT')
     await this.addColumnIfNotExists('aspect_ratio', 'TEXT')
     await this.addColumnIfNotExists('error_item_uuid', 'TEXT')
+    await this.addColumnIfNotExists('generated_image_thumbnails', 'TEXT')
+    await this.addColumnIfNotExists('source', 'TEXT')
 
     await this.database.execute(`
       CREATE INDEX IF NOT EXISTS idx_image_generation_created_at
@@ -79,6 +83,9 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
       prompt: record.prompt,
       reference_images: JSON.stringify(record.referenceImages),
       generated_images: JSON.stringify(record.generatedImages),
+      generated_image_thumbnails: record.generatedImageThumbnails
+        ? JSON.stringify(record.generatedImageThumbnails)
+        : null,
       created_at: record.createdAt,
       model_provider: record.model.provider,
       model_id: record.model.modelId,
@@ -91,6 +98,7 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
       error_item_uuid: record.errorItemUuid || null,
       task_id: record.taskId || null,
       aspect_ratio: record.aspectRatio || null,
+      source: record.source ? JSON.stringify(record.source) : null,
     }
   }
 
@@ -100,6 +108,9 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
       prompt: row.prompt as string,
       referenceImages: JSON.parse((row.reference_images as string) || '[]'),
       generatedImages: JSON.parse((row.generated_images as string) || '[]'),
+      generatedImageThumbnails: row.generated_image_thumbnails
+        ? JSON.parse(row.generated_image_thumbnails as string)
+        : undefined,
       createdAt: row.created_at as number,
       model: {
         provider: row.model_provider as string,
@@ -114,6 +125,7 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
       errorItemUuid: row.error_item_uuid as string | undefined,
       taskId: (row.task_id as string) || undefined,
       aspectRatio: row.aspect_ratio as string | undefined,
+      source: row.source ? JSON.parse(row.source as string) : undefined,
     }
   }
 
@@ -123,13 +135,14 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
 
     await this.database.run(
       `INSERT INTO image_generation
-       (id, prompt, reference_images, generated_images, created_at, model_provider, model_id, dalle_style, image_generate_num, status, parent_id, error, error_code, error_item_uuid, task_id, aspect_ratio)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, prompt, reference_images, generated_images, generated_image_thumbnails, created_at, model_provider, model_id, dalle_style, image_generate_num, status, parent_id, error, error_code, error_item_uuid, task_id, aspect_ratio, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.prompt,
         row.reference_images,
         row.generated_images,
+        row.generated_image_thumbnails,
         row.created_at,
         row.model_provider,
         row.model_id,
@@ -142,6 +155,7 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
         row.error_item_uuid,
         row.task_id,
         row.aspect_ratio,
+        row.source,
       ]
     )
   }
@@ -156,15 +170,16 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
 
     await this.database.run(
       `UPDATE image_generation SET
-       prompt = ?, reference_images = ?, generated_images = ?, created_at = ?,
+       prompt = ?, reference_images = ?, generated_images = ?, generated_image_thumbnails = ?, created_at = ?,
        model_provider = ?, model_id = ?, dalle_style = ?, image_generate_num = ?,
        status = ?, parent_id = ?, error = ?, error_code = ?, error_item_uuid = ?,
-       task_id = ?, aspect_ratio = ?
+       task_id = ?, aspect_ratio = ?, source = ?
        WHERE id = ?`,
       [
         row.prompt,
         row.reference_images,
         row.generated_images,
+        row.generated_image_thumbnails,
         row.created_at,
         row.model_provider,
         row.model_id,
@@ -177,6 +192,7 @@ export class SQLiteImageGenerationStorage implements ImageGenerationStorage {
         row.error_item_uuid,
         row.task_id,
         row.aspect_ratio,
+        row.source,
         id,
       ]
     )

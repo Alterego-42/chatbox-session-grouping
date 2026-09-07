@@ -1,10 +1,11 @@
-/** biome-ignore-all lint/security/noDangerouslySetInnerHtml: <explanation> */
+/** biome-ignore-all lint/security/noDangerouslySetInnerHtml: Mermaid sanitizes the generated SVG before returning it */
 import DataObjectIcon from '@mui/icons-material/DataObject'
 import { ChartBarStacked } from 'lucide-react'
-import mermaid from 'mermaid'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Gallery, Item } from 'react-photoswipe-gallery'
+import { trackJkAutoEvent } from '@/analytics/jk'
+import { JK_EVENTS, JK_PAGE_NAMES } from '@/analytics/jk-events'
 import { cn } from '@/lib/utils'
 import { copyToClipboard } from '@/packages/navigator'
 import * as picUtils from '@/packages/pic_utils'
@@ -17,15 +18,47 @@ export function MessageMermaid(props: { source: string; theme: 'light' | 'dark';
 
   const [svgId, setSvgId] = useState('')
   const [svgCode, setSvgCode] = useState('')
+  const [renderError, setRenderError] = useState<string | null>(null)
   useEffect(() => {
     if (generating) {
       return
     }
-    ;(async () => {
-      const { id, svg } = await mermaidCodeToSvgCode(source, theme)
-      setSvgCode(svg)
-      setSvgId(id)
+
+    let cancelled = false
+    setRenderError(null)
+    setSvgCode('')
+    setSvgId('')
+    void (async () => {
+      try {
+        const { id, svg } = await mermaidCodeToSvgCode(source, theme)
+        if (cancelled) {
+          return
+        }
+        setSvgCode(svg)
+        setSvgId(id)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+        const reason = getErrorReason(error)
+        console.error('Failed to render Mermaid diagram:', error)
+        trackJkAutoEvent(JK_EVENTS.MERMAID_RENDER_FAILED, {
+          pageName: JK_PAGE_NAMES.CHAT_PAGE,
+          content: source,
+          contentType: 'mermaid',
+          props: {
+            content_add_info: {
+              content: reason,
+            },
+          },
+        })
+        setRenderError(reason)
+      }
     })()
+
+    return () => {
+      cancelled = true
+    }
   }, [source, theme, generating])
 
   if (generating) {
@@ -34,15 +67,40 @@ export function MessageMermaid(props: { source: string; theme: 'light' | 'dark';
     return <Loading />
   }
 
+  if (renderError) {
+    return <MermaidRenderError source={source} reason={renderError} />
+  }
+
   return (
     // <SVGPreview xmlCode={svgCode} />
     <MermaidSVGPreviewDangerous svgId={svgId} svgCode={svgCode} mermaidCode={source} />
   )
 }
 
+function MermaidRenderError(props: { source: string; reason: string }) {
+  const { source, reason } = props
+  return (
+    <div className="my-2 overflow-hidden rounded-lg border border-solid border-[var(--chatbox-border-error)]">
+      <div className="bg-[var(--chatbox-background-error-secondary)] px-3 py-2 text-sm text-[var(--chatbox-tint-error)]">
+        {reason}
+      </div>
+      <pre className="m-0 overflow-auto whitespace-pre p-3 text-sm">
+        <code>{source}</code>
+      </pre>
+    </div>
+  )
+}
+
+function getErrorReason(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || error.name
+  }
+  return String(error)
+}
+
 export function Loading() {
   return (
-    <div className="inline-flex items-center gap-2 border border-solid border-gray-500 rounded-md p-2 my-2">
+    <div className="inline-flex items-center gap-2 border border-solid border-gray-500 rounded-lg p-2 my-2">
       <ChartBarStacked size={30} strokeWidth={1} />
       <span>Loading...</span>
     </div>
@@ -186,8 +244,12 @@ export function SVGPreview(props: { xmlCode: string; className?: string; generat
 }
 
 async function mermaidCodeToSvgCode(source: string, theme: 'light' | 'dark') {
-  mermaid.initialize({ theme: theme === 'light' ? 'default' : 'dark' })
-  const id = 'mermaidtmp' + Math.random().toString(36).substring(2, 15)
+  if (typeof structuredClone !== 'function') {
+    await import('core-js/actual/structured-clone.js')
+  }
+  const { default: mermaid } = await import('mermaid')
+  mermaid.initialize({ theme: theme === 'light' ? 'default' : 'dark', suppressErrorRendering: true })
+  const id = `mermaidtmp${Math.random().toString(36).substring(2, 15)}`
   const result = await mermaid.render(id, source)
   // 考虑到 mermaid 工具内部本身已经使用了 dompurify 进行处理，因此可以先假设它的输出是安全的
   // 经过测试，发现 dompurify.sanitize 有时候会导致最终的 svg 显示不完整

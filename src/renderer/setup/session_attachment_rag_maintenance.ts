@@ -1,8 +1,18 @@
-import type { Session, SessionAttachmentRagMaintenanceResult } from '@shared/types'
+import type {
+  Message,
+  Session,
+  SessionAttachmentOwnershipClaim,
+  SessionAttachmentRagMaintenanceResult,
+  SessionAttachmentRagMaintenanceScope,
+} from '@shared/types'
+import { rendererApplication } from '@/app/renderer-application'
 import { getLogger } from '@/lib/utils'
 import platform from '@/platform'
-import { getSession, listSessionsMeta } from '@/stores/chatStore'
 import { SESSION_ATTACHMENT_RAG_LOG_PREFIX } from '../../shared/session-attachment-rag/logging'
+import { collectAttachmentOwnershipClaims } from '../../shared/session-attachment-rag/ownership'
+
+const getSession = (sessionId: string) => rendererApplication.sessionQueryBridge.getSession(sessionId)
+const listSessionsMetaPage = (page: number) => rendererApplication.sessions.listSessionsMetaPage(page)
 
 const log = getLogger('session-attachment-rag-maintenance')
 const ORPHAN_CLEANUP_INTERVAL_MS = 30 * 60 * 1000
@@ -15,55 +25,56 @@ type SessionAttachmentRagMaintenanceTask = {
   run: () => Promise<SessionAttachmentRagMaintenanceResult>
 }
 
-function collectSessionMessageIds(session: Session): string[] {
-  const ids = new Set<string>()
-
-  for (const message of session.messages) {
-    ids.add(message.id)
-  }
+function collectSessionMessages(session: Session): Message[] {
+  const messages: Message[] = [...session.messages]
 
   for (const thread of session.threads ?? []) {
-    for (const message of thread.messages) {
-      ids.add(message.id)
-    }
+    messages.push(...thread.messages)
   }
 
   for (const fork of Object.values(session.messageForksHash ?? {})) {
     for (const list of fork.lists) {
-      for (const message of list.messages) {
-        ids.add(message.id)
-      }
+      messages.push(...list.messages)
     }
   }
 
-  return Array.from(ids)
+  return messages
 }
 
-async function collectMaintenanceScope() {
-  if (platform.type !== 'desktop') {
+async function collectMaintenanceScope(): Promise<SessionAttachmentRagMaintenanceScope> {
+  if (!platform.isDesktopLike) {
     return {
       sessionIds: [],
       messageIds: [],
+      attachmentReferences: [],
     }
   }
 
-  const sessionMetas = await listSessionsMeta()
-  const sessionIds = sessionMetas.map((session) => session.id)
   const messageIds = new Set<string>()
-
-  for (const sessionMeta of sessionMetas) {
-    const session = await getSession(sessionMeta.id)
-    if (!session) {
-      continue
+  const sessionIds: string[] = []
+  const attachmentReferences: SessionAttachmentOwnershipClaim[] = []
+  let cursor: number | null = 0
+  while (cursor !== null) {
+    const page = await listSessionsMetaPage(cursor)
+    for (const sessionMeta of page.items) {
+      sessionIds.push(sessionMeta.id)
+      const session = await getSession(sessionMeta.id)
+      if (!session) {
+        continue
+      }
+      const messages = collectSessionMessages(session)
+      for (const message of messages) {
+        messageIds.add(message.id)
+      }
+      attachmentReferences.push(...collectAttachmentOwnershipClaims(sessionMeta.id, messages))
     }
-    for (const messageId of collectSessionMessageIds(session)) {
-      messageIds.add(messageId)
-    }
+    cursor = page.nextCursor
   }
 
   return {
     sessionIds,
     messageIds: Array.from(messageIds),
+    attachmentReferences,
   }
 }
 
@@ -106,7 +117,7 @@ export async function runSessionAttachmentRagMaintenancePass() {
 }
 
 export function initSessionAttachmentRagMaintenance() {
-  if (maintenanceStarted || platform.type !== 'desktop') {
+  if (maintenanceStarted || !platform.isDesktopLike) {
     return
   }
 

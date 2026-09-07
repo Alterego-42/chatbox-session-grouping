@@ -7,6 +7,18 @@ export class BaseError extends Error {
   }
 }
 
+export const MESSAGE_ERROR_CODES = {
+  CHATBOX_AI_QUOTA_EXHAUSTED: 10004,
+  OCR_FAILED: 10006,
+  CHATBOX_AI_FREE_QUOTA_EXHAUSTED: 20039,
+  CHATBOX_AI_FREE_AGENT_MODE_QUOTA_EXHAUSTED: 20040,
+  FILE_PREPROCESS_FAILED: 20041,
+  FILE_STORAGE_QUOTA_EXCEEDED: 20042,
+  EMPTY_ATTACHMENT_CONTENT: 20043,
+  CHATBOX_AI_OCR_QUOTA_EXHAUSTED: 20044,
+  CHATBOX_AI_FREE_OCR_QUOTA_EXHAUSTED: 20045,
+} as const
+
 // 10000 - 19999 为通用网络接口错误
 
 export class ApiError extends BaseError {
@@ -19,6 +31,11 @@ export class ApiError extends BaseError {
     this.statusCode = statusCode
   }
 }
+
+// Upstream failed after part of the response had already streamed. Never safe
+// to auto-retry: the provider may have billed the partial generation, and the
+// partial text has already reached the UI, so a silent retry would duplicate it.
+export class MidStreamApiError extends ApiError {}
 
 export class NetworkError extends BaseError {
   public code = 10002
@@ -44,13 +61,20 @@ export class AIProviderNoImplementedChatError extends BaseError {
 }
 
 export class OCRError extends BaseError {
-  public code = 10006
+  public code: number
   public ocrProvider: string
   public cause: Error
   constructor(ocrProvider: string, cause: Error) {
     super(`OCR Error (${ocrProvider}): ${cause.message}`)
     this.ocrProvider = ocrProvider
     this.cause = cause
+    if (cause instanceof BaseError && cause.code === MESSAGE_ERROR_CODES.CHATBOX_AI_QUOTA_EXHAUSTED) {
+      this.code = MESSAGE_ERROR_CODES.CHATBOX_AI_OCR_QUOTA_EXHAUSTED
+    } else if (cause instanceof BaseError && cause.code === MESSAGE_ERROR_CODES.CHATBOX_AI_FREE_QUOTA_EXHAUSTED) {
+      this.code = MESSAGE_ERROR_CODES.CHATBOX_AI_FREE_OCR_QUOTA_EXHAUSTED
+    } else {
+      this.code = MESSAGE_ERROR_CODES.OCR_FAILED
+    }
   }
 }
 
@@ -64,16 +88,22 @@ export class ChatboxAIAPIError extends BaseError {
     // 超出配额
     token_quota_exhausted: {
       name: 'token_quota_exhausted',
-      code: 10004, // 小于 20000 是为了兼容旧版本
+      code: MESSAGE_ERROR_CODES.CHATBOX_AI_QUOTA_EXHAUSTED, // 小于 20000 是为了兼容旧版本
       i18nKey:
-        'You have reached your monthly quota for the {{model}} model. Please <OpenSettingButton>go to Settings</OpenSettingButton> to switch to a different model, view your quota usage, or upgrade your plan.',
+        'You have used up your monthly Chatbox AI quota. Please <OpenSettingButton>go to Settings</OpenSettingButton> to view your quota usage or upgrade your plan.',
     },
-    // 超出配额（免费计划）
+    // 超出每日免费配额
+    free_token_quota_exhausted: {
+      name: 'free_token_quota_exhausted',
+      code: MESSAGE_ERROR_CODES.CHATBOX_AI_FREE_QUOTA_EXHAUSTED,
+      i18nKey:
+        'You have used up your daily Chatbox AI quota. Please <OpenSettingButton>go to Settings</OpenSettingButton> to view your quota usage or upgrade your plan.',
+    },
     token_quota_exhausted_free: {
       name: 'token_quota_exhausted_free',
-      code: 10004, // 免费计划的每日配额用同一个 code，前端根据 license 类型区分展示
+      code: MESSAGE_ERROR_CODES.CHATBOX_AI_FREE_QUOTA_EXHAUSTED,
       i18nKey:
-        'You have reached your daily quota for the {{model}} model. Please <OpenSettingButton>go to Settings</OpenSettingButton> to switch to a different model, view your quota usage, or upgrade your plan.',
+        'You have used up your daily Chatbox AI quota. Please <OpenSettingButton>go to Settings</OpenSettingButton> to view your quota usage or upgrade your plan.',
     },
     // 当前套餐不支持该模型
     license_upgrade_required: {
@@ -262,6 +292,12 @@ export class ChatboxAIAPIError extends BaseError {
       code: 20030,
       i18nKey: 'Chatbox AI document parsing failed. Please try again later.',
     },
+    chatbox_ai_parser_license_key_required: {
+      name: 'chatbox_ai_parser_license_key_required',
+      code: 20046,
+      i18nKey:
+        '<OpenSettingButton>Sign in to Chatbox AI</OpenSettingButton> to use your account license, or choose a different <OpenDocumentParserSettingButton>document parser</OpenDocumentParserSettingButton>.',
+    },
     third_party_parser_failed: {
       name: 'third_party_parser_failed',
       code: 20031,
@@ -286,11 +322,23 @@ export class ChatboxAIAPIError extends BaseError {
       i18nKey:
         'This file type requires a document parser. Please go to <OpenDocumentParserSettingButton>Settings</OpenDocumentParserSettingButton> and enable Chatbox AI document parsing.',
     },
+    file_storage_quota_exceeded: {
+      name: 'file_storage_quota_exceeded',
+      code: MESSAGE_ERROR_CODES.FILE_STORAGE_QUOTA_EXCEEDED,
+      i18nKey:
+        'Storage is full. Delete some old conversations or large attachments, or free up device space, then try again.',
+    },
     bocha_api_key_required: {
       name: 'bocha_api_key_required',
       code: 20035,
       i18nKey:
         'You have selected BoCha as the search provider, but an API key has not been entered yet. Please <OpenExtensionSettingButton>click here to open Settings</OpenExtensionSettingButton> and enter your API key, or choose a different search provider.',
+    },
+    searxng_base_url_required: {
+      name: 'searxng_base_url_required',
+      code: 20036,
+      i18nKey:
+        'You have selected SearXNG as the search provider, but an instance URL has not been entered yet. Please <OpenExtensionSettingButton>click here to open Settings</OpenExtensionSettingButton> and enter your SearXNG instance URL, or choose a different search provider.',
     },
     parse_link_failed: {
       name: 'parse_link_failed',
@@ -303,6 +351,22 @@ export class ChatboxAIAPIError extends BaseError {
       i18nKey:
         'The current search provider does not support reading webpages. Please <OpenExtensionSettingButton>choose a different search provider</OpenExtensionSettingButton> that supports this capability.',
     },
+    file_preprocess_failed: {
+      name: 'file_preprocess_failed',
+      code: MESSAGE_ERROR_CODES.FILE_PREPROCESS_FAILED,
+      i18nKey: 'Failed to parse file. Please try again or use a different file format.',
+    },
+    empty_attachment_content: {
+      name: 'empty_attachment_content',
+      code: MESSAGE_ERROR_CODES.EMPTY_ATTACHMENT_CONTENT,
+      i18nKey: 'No readable content was found in this attachment. Please check the file and try again.',
+    },
+    // Free 用户在工作模式中点数耗尽，但仍可领取一次奖励额度继续当前任务
+    free_agent_mode_token_quota_exhausted: {
+      name: 'free_agent_mode_token_quota_exhausted',
+      code: MESSAGE_ERROR_CODES.CHATBOX_AI_FREE_AGENT_MODE_QUOTA_EXHAUSTED,
+      i18nKey: 'Your points are used up. Claim free reward quota to continue.',
+    },
   }
   static fromCodeName(response: string, codeName: string, requestId?: string) {
     if (!codeName) {
@@ -313,15 +377,9 @@ export class ChatboxAIAPIError extends BaseError {
     }
     return null
   }
-  static getDetail(code: number, preferredCodeName?: string) {
+  static getDetail(code: number) {
     if (!code) {
       return null
-    }
-    if (preferredCodeName) {
-      const preferred = ChatboxAIAPIError.codeNameMap[preferredCodeName]
-      if (preferred && preferred.code === code) {
-        return preferred
-      }
     }
     for (const name in ChatboxAIAPIError.codeNameMap) {
       if (ChatboxAIAPIError.codeNameMap[name].code === code) {

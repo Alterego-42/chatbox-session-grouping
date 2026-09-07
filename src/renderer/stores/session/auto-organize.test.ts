@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../groupStore', () => ({ createGroup: mocks.createGroup }))
-vi.mock('../sessionActions', () => ({ moveSessionToGroup: mocks.moveSessionToGroup }))
+vi.mock('./groups', () => ({ moveSessionToGroup: mocks.moveSessionToGroup }))
 
 import { applyProposal, noOpStrategy } from './auto-organize'
 

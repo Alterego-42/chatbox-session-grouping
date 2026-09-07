@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../../shared/types'
 import { MessageRoleEnum } from '../../shared/types/session'
 import {
@@ -12,6 +12,16 @@ import {
   sliceTextByTokenLimit,
   sumCachedTokensFromMessages,
 } from './token'
+import {
+  estimateDraftTokensImmediately,
+  LONG_DRAFT_TOKENIZATION_THRESHOLD,
+  seedExactDraftTokens,
+} from './token-estimation/draft-tokenization'
+
+vi.mock('./token-estimation/tokenizer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./token-estimation/tokenizer')>()
+  return { ...actual, estimateTokens: vi.fn(actual.estimateTokens) }
+})
 
 // Helper to create test messages
 function createMessage(overrides: Partial<Message> & { text?: string } = {}): Message {
@@ -149,8 +159,8 @@ describe('sumCachedTokensFromMessages', () => {
         tokenCountMap: { default: 30, deepseek: 24 },
       }),
     ]
-    // 16 + 24 + (2 messages × 4 overhead) = 40 + 12 = 52
-    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(52)
+    // 16 + 24 + (2 messages × 5 overhead: 3 tokensPerMessage + 2 DeepSeek role "user" tokens) = 40 + 10 = 50
+    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(50)
   })
 
   it('should handle mixed scenario with some messages having cache and some not', () => {
@@ -228,10 +238,8 @@ describe('sumCachedTokensFromMessages', () => {
     const deepSeekTokens = sumCachedTokensFromMessages(messages, deepSeekModel)
     // 500 + (1 message × 4 overhead) = 504
     expect(defaultTokens).toBe(504)
-    // 400 + 3 (tokensPerMessage) + 2 (DeepSeek role tokens) = 405... but got 406
-    // DeepSeek role "user" = 2 tokens, so 400 + 3 + 2 = 405, but actual is 406
-    // Likely DeepSeek role estimation is 3 tokens: 400 + 3 + 3 = 406
-    expect(deepSeekTokens).toBe(406)
+    // 400 + 3 (tokensPerMessage) + 2 (DeepSeek role "user" tokens) = 405
+    expect(deepSeekTokens).toBe(405)
   })
 
   it('should use DeepSeek cache key for links when model is DeepSeek', () => {
@@ -252,8 +260,8 @@ describe('sumCachedTokensFromMessages', () => {
     const deepSeekTokens = sumCachedTokensFromMessages(messages, deepSeekModel)
     // 300 + (1 message × 4 overhead) = 304
     expect(defaultTokens).toBe(304)
-    // 250 + 3 (tokensPerMessage) + 3 (DeepSeek role tokens) = 256
-    expect(deepSeekTokens).toBe(256)
+    // 250 + 3 (tokensPerMessage) + 2 (DeepSeek role "user" tokens) = 255
+    expect(deepSeekTokens).toBe(255)
   })
 
   it('should handle messages with multiple files and links', () => {
@@ -287,8 +295,8 @@ describe('sumCachedTokensFromMessages', () => {
     ]
     // 10 + 100 + 150 + 200 + (1 message × 4 overhead) = 460 + 4 = 464
     expect(sumCachedTokensFromMessages(messages, openAIModel)).toBe(464)
-    // 10 + 80 + 120 + 160 + 3 (tokensPerMessage) + 3 (DeepSeek role tokens) = 370 + 6 = 376
-    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(376)
+    // 10 + 80 + 120 + 160 + 3 (tokensPerMessage) + 2 (DeepSeek role "user" tokens) = 370 + 5 = 375
+    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(375)
   })
 
   it('should prefer tokenCountMap over tokenCount', () => {
@@ -301,8 +309,8 @@ describe('sumCachedTokensFromMessages', () => {
     ]
     // 20 + (1 message × 4 overhead) = 24
     expect(sumCachedTokensFromMessages(messages, openAIModel)).toBe(24)
-    // 16 + 3 (tokensPerMessage) + 3 (DeepSeek role tokens) = 22
-    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(22)
+    // 16 + 3 (tokensPerMessage) + 2 (DeepSeek role "user" tokens) = 21
+    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(21)
   })
 
   it('should fall back to tokenCount when tokenCountMap cache key is missing', () => {
@@ -313,8 +321,8 @@ describe('sumCachedTokensFromMessages', () => {
         tokenCountMap: { default: 20 },
       }),
     ]
-    // Falls back to tokenCount: 10 + 3 (tokensPerMessage) + 3 (DeepSeek role tokens) = 16
-    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(16)
+    // Falls back to tokenCount: 10 + 3 (tokensPerMessage) + 2 (DeepSeek role "user" tokens) = 15
+    expect(sumCachedTokensFromMessages(messages, deepSeekModel)).toBe(15)
   })
 })
 
@@ -987,5 +995,102 @@ describe('estimateTokensFromMessagesForSendPayload', () => {
 
       expect(tokens).toBeGreaterThan(300)
     })
+  })
+})
+
+describe('exact text counts carried on the message', () => {
+  // Sentinel counts far above any real encode of the text prove the carried
+  // value was used instead of a synchronous fallback encode.
+  it('trusts the entry for the requested tokenizer only', () => {
+    // Spaced words: an unbroken same-character run makes the fallback BPE
+    // encode quadratic and the test timing-fragile.
+    const text = 'draft word '.repeat(500)
+    const message = { ...createMessage({ text }), tokenCountMap: { deepseek: 424242 } }
+
+    expect(estimateTokensFromMessages([message], 'output', deepSeekModel)).toBeGreaterThan(424242)
+    // The DeepSeek entry must not leak into default-tokenizer estimates.
+    expect(estimateTokensFromMessages([message], 'output', openAIModel)).toBeLessThan(10000)
+  })
+
+  it('uses a seeded draft count across the send-path estimators', () => {
+    const text = 'draft word '.repeat(500)
+    const message = createMessage()
+    message.contentParts = [
+      { type: 'text', text },
+      { type: 'image', storageKey: 'img-1' },
+    ]
+    const seeded = seedExactDraftTokens(message, {
+      text: `${text}\n[image]`,
+      tokenizerType: 'default',
+      tokens: 555555,
+    })
+
+    expect(estimateTokensFromMessages([seeded], 'output')).toBeGreaterThan(555555)
+    expect(estimateTokensFromMessagesForSendPayload([seeded])).toBeGreaterThan(555555)
+  })
+
+  it('leaves a drifted draft unseeded and falls back to a real estimate', () => {
+    const text = 'draft word '.repeat(500)
+    const message = createMessage({ text })
+    const seeded = seedExactDraftTokens(message, {
+      text: `${text} plus edits after the worker ran`,
+      tokenizerType: 'default',
+      tokens: 555555,
+    })
+
+    expect(seeded.tokenCountMap).toBeUndefined()
+    expect(estimateTokensFromMessages([seeded], 'output')).toBeLessThan(10000)
+  })
+})
+
+describe('unseeded long text stays off the full encoder', () => {
+  // A submit racing the debounce or the worker (or drifting past its result)
+  // arrives with no carried count; the estimators must degrade to the bounded
+  // sampling estimate, never to a full main-thread encode of the long text.
+  const longText = 'draft word '.repeat(500)
+
+  function fullEncodeCalls(): number {
+    return vi.mocked(estimateTokens).mock.calls.filter(([text]) => text.length >= LONG_DRAFT_TOKENIZATION_THRESHOLD)
+      .length
+  }
+
+  beforeEach(() => {
+    vi.mocked(estimateTokens).mockClear()
+  })
+
+  it('samples the long text in estimateTokensFromMessages', () => {
+    const message = createMessage({ text: longText })
+
+    const total = estimateTokensFromMessages([message], 'output')
+
+    expect(total).toBe(3 + estimateDraftTokensImmediately(longText, 'default') + estimateTokens('user'))
+    expect(fullEncodeCalls()).toBe(0)
+  })
+
+  it('samples the long text in estimateTokensFromMessagesForSendPayload', () => {
+    const message = createMessage({ text: longText })
+
+    const total = estimateTokensFromMessagesForSendPayload([message])
+
+    expect(total).toBe(3 + estimateDraftTokensImmediately(longText, 'default') + estimateTokens('user'))
+    expect(fullEncodeCalls()).toBe(0)
+  })
+
+  it('samples with the tokenizer the model resolves to', () => {
+    const message = createMessage({ text: longText })
+
+    const total = estimateTokensFromMessages([message], 'output', deepSeekModel)
+
+    expect(total).toBe(3 + estimateDraftTokensImmediately(longText, 'deepseek') + estimateTokens('user', deepSeekModel))
+    expect(fullEncodeCalls()).toBe(0)
+  })
+
+  it('keeps short unseeded text on the exact encoder', () => {
+    const shortText = 'short unseeded draft'
+    const message = createMessage({ text: shortText })
+
+    estimateTokensFromMessages([message], 'output')
+
+    expect(vi.mocked(estimateTokens).mock.calls.some(([text]) => text === shortText)).toBe(true)
   })
 })

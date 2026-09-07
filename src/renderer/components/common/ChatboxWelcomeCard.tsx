@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { trackJkClickEvent } from '@/analytics/jk'
 import { JK_EVENTS } from '@/analytics/jk-events'
-import { navigateToSettings } from '@/modals/Settings'
+import { navigateToSettings } from '@/modals/settings-navigation'
 import { openLinkWithAuth } from '@/packages/openLinkWithAuth'
 import * as remote from '@/packages/remote'
 import { useLanguage } from '@/stores/settingsStore'
@@ -24,7 +24,7 @@ export function ChatboxWelcomeCard(props: { mode: HomeWelcomeCardMode; pageName:
 
   return (
     <Paper
-      radius="md"
+      radius="lg"
       withBorder
       py="md"
       px="sm"

@@ -1,7 +1,14 @@
 import NiceModal from '@ebay/nice-modal-react'
 import { ActionIcon, Avatar, Flex, Highlight, Stack, Text } from '@mantine/core'
 import type { CopilotDetail } from '@shared/types'
-import { IconDots, IconEdit, IconMessageCircle2Filled, IconStar, IconStarFilled, IconTrash } from '@tabler/icons-react'
+import {
+  IconDots,
+  IconEdit,
+  IconMessageCircle2Filled,
+  IconPinned,
+  IconPinnedFilled,
+  IconTrash,
+} from '@tabler/icons-react'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -51,7 +58,7 @@ export function CopilotItem({ copilot, type = 'local', highlightTerm = '' }: Cop
         relative
         p-xs
         gap-xs
-        rounded-md
+        rounded-lg
         border border-solid border-chatbox-border-primary
         bg-chatbox-background-primary
         cursor-pointer
@@ -64,7 +71,7 @@ export function CopilotItem({ copilot, type = 'local', highlightTerm = '' }: Cop
               src={avatar?.type === 'storage-key' ? '' : avatar?.url || picUrl}
               alt={name}
               size={36}
-              radius="md"
+              radius="lg"
               className="flex-shrink-0 border border-solid border-chatbox-border-primary"
             >
               {avatar?.type === 'storage-key' ? (
@@ -82,7 +89,7 @@ export function CopilotItem({ copilot, type = 'local', highlightTerm = '' }: Cop
               h={36}
               align="center"
               justify="center"
-              className="flex-shrink-0 rounded-md bg-chatbox-background-brand-secondary"
+              className="flex-shrink-0 rounded-lg bg-chatbox-background-brand-secondary"
             >
               <ScalableIcon icon={IconMessageCircle2Filled} size={20} className="text-chatbox-tint-brand" />
             </Stack>
@@ -123,8 +130,8 @@ export function CopilotItem({ copilot, type = 'local', highlightTerm = '' }: Cop
                   ...(copilot.starred
                     ? [
                         {
-                          text: t('Unstar'),
-                          icon: IconStarFilled,
+                          text: t('Unpin'),
+                          icon: IconPinnedFilled,
                           onClick: () => {
                             store.addOrUpdate({
                               ...copilot,
@@ -135,8 +142,8 @@ export function CopilotItem({ copilot, type = 'local', highlightTerm = '' }: Cop
                       ]
                     : [
                         {
-                          text: t('Star'),
-                          icon: IconStar,
+                          text: t('Pin'),
+                          icon: IconPinned,
                           onClick: () => {
                             store.addOrUpdate({
                               ...copilot,
@@ -166,7 +173,7 @@ export function CopilotItem({ copilot, type = 'local', highlightTerm = '' }: Cop
                   onClick={(e) => e.stopPropagation()}
                 >
                   {type === 'local' && copilot.starred ? (
-                    <ScalableIcon icon={IconStarFilled} size={16} />
+                    <ScalableIcon icon={IconPinnedFilled} size={16} />
                   ) : (
                     <ScalableIcon icon={IconDots} size={16} />
                   )}

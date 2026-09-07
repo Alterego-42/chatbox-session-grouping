@@ -3,7 +3,7 @@ import { Button, Image, List, Paper, Stack, Text, Title } from '@mantine/core'
 import { useTranslation } from 'react-i18next'
 import { AdaptiveModal } from '@/components/common/AdaptiveModal'
 import icon from '../static/icon.png'
-import { navigateToSettings } from './Settings'
+import { navigateToSettings } from './settings-navigation'
 
 const Welcome = NiceModal.create(() => {
   const { t } = useTranslation()
@@ -42,13 +42,13 @@ const Welcome = NiceModal.create(() => {
           </List>
         </Stack>
 
-        <Paper shadow="none" radius="md" withBorder p="lg">
+        <Paper shadow="none" radius="lg" withBorder p="lg">
           <Stack gap="sm">
             <Text className="text-center">{t('Select and configure an AI model provider')}</Text>
             <Button
               size="lg"
               h={54}
-              radius="md"
+              radius="lg"
               classNames={{ root: '!outline-none', label: 'flex flex-col items-center justify-center' }}
               onClick={() => {
                 navigateToSettings('/provider/chatbox-ai')

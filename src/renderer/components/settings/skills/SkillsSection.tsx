@@ -1,18 +1,5 @@
-import {
-  ActionIcon,
-  Badge,
-  Box,
-  Button,
-  Flex,
-  Loader,
-  Paper,
-  SimpleGrid,
-  Switch,
-  Text,
-  TextInput,
-  Tooltip,
-} from '@mantine/core'
-import type { SkillInfo } from '@shared/types/skills'
+import { ActionIcon, Badge, Box, Button, Flex, Loader, Paper, SimpleGrid, Switch, Text, TextInput } from '@mantine/core'
+import { DEFAULT_ENABLED_BUILTIN_SKILL_NAMES, type SkillInfo } from '@shared/types/skills'
 import {
   IconBrandGithub,
   IconDots,
@@ -22,14 +9,16 @@ import {
   IconSearch,
   IconTrash,
   IconWand,
+  IconX,
 } from '@tabler/icons-react'
 import { type FC, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import ActionMenu, { type ActionMenuItemProps } from '@/components/ActionMenu'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
+import { AppTooltip as Tooltip } from '@/components/ui/tooltip'
 import { useSkillTranslation } from '@/hooks/useSkillTranslation'
-import { skillsController } from '@/packages/skills/controller'
+import { notifySkillsChanged, skillsController } from '@/packages/skills/controller'
 import { toastError } from '@/packages/toast'
 import { settingsStore, useSettingsStore } from '@/stores/settingsStore'
 import GitHubInstallModal, { type DetectedSkill } from './GitHubInstallModal'
@@ -47,7 +36,7 @@ const SkillCard: FC<{
   return (
     <Paper
       shadow="xs"
-      radius="md"
+      radius="lg"
       withBorder
       p="sm"
       className="transition-all duration-150 hover:shadow-md"
@@ -91,31 +80,23 @@ const SkillCard: FC<{
         </Flex>
       </Flex>
 
-      <Tooltip
-        label={skill.description}
-        multiline
-        withArrow
-        w={420}
-        openDelay={400}
-        events={{ hover: true, focus: true, touch: true }}
-      >
+      <Tooltip label={skill.description} multiline withArrow w={420} openDelay={400}>
         <Text size="xs" mt={8} c="chatbox-tertiary" lineClamp={2} className="cursor-help leading-relaxed">
           {skill.description}
         </Text>
       </Tooltip>
 
-      {(skill.bodyTokenEstimate != null || skill.source?.repo) && (
+      {(skill.source?.repo || (skill.source?.type && skill.source.type !== 'local')) && (
         <Flex mt={8} gap={6} wrap="wrap">
-          {skill.bodyTokenEstimate != null && (
-            <Badge size="xs" variant="light" color="chatbox-brand" radius="sm">
-              ~{skill.bodyTokenEstimate.toLocaleString()} tokens
-            </Badge>
-          )}
-          {skill.source?.repo && (
-            <Badge size="xs" variant="light" color="gray" radius="sm">
+          {skill.source?.repo ? (
+            <Badge size="xs" variant="light" color="gray" radius="lg">
               {skill.source.repo}
             </Badge>
-          )}
+          ) : skill.source?.type && skill.source.type !== 'local' ? (
+            <Badge size="xs" variant="light" color="gray" radius="lg">
+              {skill.source.type}
+            </Badge>
+          ) : null}
         </Flex>
       )}
     </Paper>
@@ -124,23 +105,29 @@ const SkillCard: FC<{
 
 const SectionHeader: FC<{
   title: string
+  subtitle?: string
   count?: number
   right?: React.ReactNode
   className?: string
-}> = ({ title, count, right, className }) => (
-  <Flex justify="space-between" align="center" className={className}>
-    <Flex align="center" gap={8}>
+}> = ({ title, subtitle, count, right, className }) => (
+  <Flex justify="space-between" align="center" gap={8} className={className}>
+    <Flex align="center" gap={8} style={{ minWidth: 0 }} wrap="wrap">
       <Text size="sm" fw={600}>
         {title}
       </Text>
+      {subtitle && (
+        <Text size="xs" c="chatbox-tertiary" ff="monospace" style={{ wordBreak: 'break-all' }}>
+          {subtitle}
+        </Text>
+      )}
       {count != null && (
-        <Badge size="xs" variant="light" color="gray" radius="sm">
+        <Badge size="xs" variant="light" color="gray" radius="lg">
           {count}
         </Badge>
       )}
     </Flex>
     {right && (
-      <Flex align="center" gap="xs">
+      <Flex align="center" gap="xs" style={{ flexShrink: 0 }}>
         {right}
       </Flex>
     )}
@@ -151,7 +138,7 @@ const EmptyState: FC<{ onAddClick: () => void; onOpenFolder: () => void }> = ({ 
   const { t } = useTranslation()
 
   return (
-    <Paper radius="md" p="xl" className="border border-dashed border-chatbox-border-primary">
+    <Paper radius="lg" p="xl" className="border border-dashed border-chatbox-border-primary">
       <Flex direction="column" align="center" gap={12} py="md">
         <Box className="rounded-full p-3 bg-chatbox-background-gray-secondary">
           <ScalableIcon icon={IconWand} size={24} className="text-chatbox-tint-tertiary" />
@@ -197,6 +184,7 @@ export const SkillsSection: FC = () => {
   const [installModalOpen, setInstallModalOpen] = useState(false)
   const [repoInfo, setRepoInfo] = useState({ owner: '', repo: '' })
   const [showGithubInput, setShowGithubInput] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const skillSettings = useSettingsStore((state) => state.skills)
   const { translatedSkills, getTranslatedName, isTranslating, translationEnabled, toggleTranslation } =
     useSkillTranslation(skills)
@@ -205,7 +193,76 @@ export const SkillsSection: FC = () => {
     setLoading(true)
     try {
       const discovered = await skillsController.discoverSkills()
-      setSkills(discovered)
+      const defaultEnabledBuiltinSkillNames = discovered
+        .filter(
+          (skill) =>
+            skill.isBuiltin &&
+            DEFAULT_ENABLED_BUILTIN_SKILL_NAMES.includes(
+              skill.name as (typeof DEFAULT_ENABLED_BUILTIN_SKILL_NAMES)[number]
+            )
+        )
+        .map((skill) => skill.name)
+      const discoveredNames = new Set(discovered.map((skill) => skill.name))
+      const currentSkillSettings = settingsStore.getState().skills
+      const appliedDefaultBuiltinSkillNames =
+        currentSkillSettings.appliedDefaultBuiltinSkillNames ??
+        (currentSkillSettings.builtinDefaultsInitialized ? ['chatbox-product-info'] : [])
+      const newlyAddedDefaultSkillNames = defaultEnabledBuiltinSkillNames.filter(
+        (name) => !appliedDefaultBuiltinSkillNames.includes(name)
+      )
+      const enabledSkillNames = [
+        ...new Set([
+          ...currentSkillSettings.enabledSkillNames,
+          ...(currentSkillSettings.builtinDefaultsInitialized
+            ? newlyAddedDefaultSkillNames
+            : defaultEnabledBuiltinSkillNames),
+        ]),
+      ]
+      const enabledNameSet = new Set(enabledSkillNames)
+      const originalIndexByName = new Map(discovered.map((skill, index) => [skill.name, index]))
+      const sortedDiscovered = [...discovered].sort((a, b) => {
+        const aEnabled = enabledNameSet.has(a.name)
+        const bEnabled = enabledNameSet.has(b.name)
+        if (aEnabled !== bEnabled) {
+          return aEnabled ? -1 : 1
+        }
+        return (originalIndexByName.get(a.name) ?? 0) - (originalIndexByName.get(b.name) ?? 0)
+      })
+      setSkills(sortedDiscovered)
+      settingsStore.setState((state) => {
+        const appliedDefaultBuiltinSkillNames =
+          state.skills.appliedDefaultBuiltinSkillNames ??
+          (state.skills.builtinDefaultsInitialized ? ['chatbox-product-info'] : [])
+        const newlyAddedDefaultSkillNames = defaultEnabledBuiltinSkillNames.filter(
+          (name) => !appliedDefaultBuiltinSkillNames.includes(name)
+        )
+        const enabledSkillNames = (
+          state.skills.builtinDefaultsInitialized
+            ? [...new Set([...state.skills.enabledSkillNames, ...newlyAddedDefaultSkillNames])]
+            : [...new Set([...state.skills.enabledSkillNames, ...defaultEnabledBuiltinSkillNames])]
+        ).filter((name) => discoveredNames.has(name))
+        const nextAppliedDefaultBuiltinSkillNames = [
+          ...new Set([...appliedDefaultBuiltinSkillNames, ...defaultEnabledBuiltinSkillNames]),
+        ]
+        if (
+          state.skills.builtinDefaultsInitialized &&
+          enabledSkillNames.length === state.skills.enabledSkillNames.length &&
+          enabledSkillNames.every((name, index) => name === state.skills.enabledSkillNames[index]) &&
+          nextAppliedDefaultBuiltinSkillNames.length === appliedDefaultBuiltinSkillNames.length &&
+          nextAppliedDefaultBuiltinSkillNames.every((name, index) => name === appliedDefaultBuiltinSkillNames[index])
+        ) {
+          return state
+        }
+        return {
+          skills: {
+            ...state.skills,
+            enabledSkillNames,
+            builtinDefaultsInitialized: true,
+            appliedDefaultBuiltinSkillNames: nextAppliedDefaultBuiltinSkillNames,
+          },
+        }
+      })
+      notifySkillsChanged()
     } catch (err) {
       console.error('Failed to discover skills:', err)
     } finally {
@@ -217,17 +274,35 @@ export const SkillsSection: FC = () => {
     fetchSkills()
   }, [fetchSkills])
 
-  const originalUserSkillByPath = useMemo(() => {
+  const originalSkillByPath = useMemo(() => {
     return new Map(skills.filter((skill) => !skill.isBuiltin).map((skill) => [skill.path, skill]))
   }, [skills])
 
-  const userSkills = translatedSkills.filter((skill) => !skill.isBuiltin)
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const matchesQuery = useCallback(
+    (skill: SkillInfo) => {
+      if (!normalizedQuery) return true
+      return [skill.name, skill.description, getTranslatedName(skill), skill.source?.repo]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(normalizedQuery))
+    },
+    [normalizedQuery, getTranslatedName]
+  )
+
+  const filteredSkills = useMemo(() => translatedSkills.filter(matchesQuery), [translatedSkills, matchesQuery])
+
+  const builtinSkills = filteredSkills.filter((skill) => skill.isBuiltin)
+  const userSkills = filteredSkills.filter(
+    (skill) => !skill.isBuiltin && skill.source?.type !== 'claude-code' && skill.source?.type !== 'agents'
+  )
+  const claudeCodeSkills = filteredSkills.filter((skill) => skill.source?.type === 'claude-code')
+  const agentSkills = filteredSkills.filter((skill) => skill.source?.type === 'agents')
 
   const getOriginalUserSkill = useCallback(
     (skill: SkillInfo) => {
-      return originalUserSkillByPath.get(skill.path) ?? skill
+      return originalSkillByPath.get(skill.path) ?? skill
     },
-    [originalUserSkillByPath]
+    [originalSkillByPath]
   )
 
   const handleUserToggle = useCallback((name: string, enabled: boolean) => {
@@ -359,7 +434,7 @@ export const SkillsSection: FC = () => {
       </Flex>
 
       {showGithubInput && (
-        <Paper radius="md" withBorder p="sm" mb="lg" className="bg-chatbox-background-gray-secondary/30">
+        <Paper radius="lg" withBorder p="sm" mb="lg" className="bg-chatbox-background-gray-secondary/30">
           <Flex align="center" gap={8} mb={8}>
             <ScalableIcon icon={IconBrandGithub} size={16} className="text-chatbox-tint-tertiary" />
             <Text size="xs" fw={500}>
@@ -387,8 +462,43 @@ export const SkillsSection: FC = () => {
         </Paper>
       )}
 
+      {skills.length > 0 && (
+        <TextInput
+          size="xs"
+          mb="lg"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.currentTarget.value)}
+          placeholder={String(t('Search skills...'))}
+          leftSection={<ScalableIcon icon={IconSearch} size={14} />}
+          rightSection={
+            searchQuery ? (
+              <ActionIcon variant="subtle" size="sm" color="gray" onClick={() => setSearchQuery('')}>
+                <ScalableIcon icon={IconX} size={14} />
+              </ActionIcon>
+            ) : null
+          }
+        />
+      )}
+
+      {builtinSkills.length > 0 && (
+        <>
+          <SectionHeader title={t('Built-in Skills')} count={builtinSkills.length} className="mb-3" />
+          <SimpleGrid type="container" cols={{ base: 1, '450px': 2, '800px': 3, '1200px': 4 }} mb="xl">
+            {builtinSkills.map((skill) => (
+              <SkillCard
+                key={skill.path}
+                skill={skill}
+                translatedName={getTranslatedName(skill)}
+                enabled={skillSettings.enabledSkillNames.includes(skill.name)}
+                onToggle={handleUserToggle}
+              />
+            ))}
+          </SimpleGrid>
+        </>
+      )}
+
       <SectionHeader
-        title={t('User Skills')}
+        title={t('Installed Skills')}
         count={userSkills.length}
         className="mb-3"
         right={
@@ -412,7 +522,13 @@ export const SkillsSection: FC = () => {
       />
 
       {userSkills.length === 0 ? (
-        <EmptyState onAddClick={skillsSpotlight.open} onOpenFolder={() => void handleOpenFolder()} />
+        normalizedQuery ? (
+          <Text size="xs" c="chatbox-tertiary" py="sm">
+            {t('No skills match "{{query}}"', { query: searchQuery.trim() })}
+          </Text>
+        ) : (
+          <EmptyState onAddClick={skillsSpotlight.open} onOpenFolder={() => void handleOpenFolder()} />
+        )
       ) : (
         <SimpleGrid type="container" cols={{ base: 1, '450px': 2, '800px': 3, '1200px': 4 }}>
           {userSkills.map((skill) => {
@@ -453,6 +569,56 @@ export const SkillsSection: FC = () => {
         </SimpleGrid>
       )}
 
+      {claudeCodeSkills.length > 0 && (
+        <>
+          <SectionHeader
+            title={t('Claude Code Skills')}
+            subtitle="~/.claude/skills"
+            count={claudeCodeSkills.length}
+            className="mt-6 mb-3"
+          />
+          <SimpleGrid type="container" cols={{ base: 1, '450px': 2, '800px': 3, '1200px': 4 }}>
+            {claudeCodeSkills.map((skill) => {
+              const originalSkill = getOriginalUserSkill(skill)
+              return (
+                <SkillCard
+                  key={originalSkill.path}
+                  skill={skill}
+                  translatedName={getTranslatedName(skill)}
+                  enabled={skillSettings.enabledSkillNames.includes(originalSkill.name)}
+                  onToggle={(name, enabled) => handleUserToggle(originalSkill.name || name, enabled)}
+                />
+              )
+            })}
+          </SimpleGrid>
+        </>
+      )}
+
+      {agentSkills.length > 0 && (
+        <>
+          <SectionHeader
+            title={t('Local Agent Skills')}
+            subtitle="~/.agents/skills"
+            count={agentSkills.length}
+            className="mt-6 mb-3"
+          />
+          <SimpleGrid type="container" cols={{ base: 1, '450px': 2, '800px': 3, '1200px': 4 }}>
+            {agentSkills.map((skill) => {
+              const originalSkill = getOriginalUserSkill(skill)
+              return (
+                <SkillCard
+                  key={originalSkill.path}
+                  skill={skill}
+                  translatedName={getTranslatedName(skill)}
+                  enabled={skillSettings.enabledSkillNames.includes(originalSkill.name)}
+                  onToggle={(name, enabled) => handleUserToggle(originalSkill.name || name, enabled)}
+                />
+              )
+            })}
+          </SimpleGrid>
+        </>
+      )}
+
       <GitHubInstallModal
         opened={installModalOpen}
         onClose={() => setInstallModalOpen(false)}
@@ -464,10 +630,7 @@ export const SkillsSection: FC = () => {
         }}
       />
 
-      <SkillsSpotlight
-        installedSkillNames={skills.filter((s) => !s.isBuiltin).map((s) => s.name)}
-        onInstallComplete={fetchSkills}
-      />
+      <SkillsSpotlight installedSkills={skills.filter((s) => !s.isBuiltin)} onInstallComplete={fetchSkills} />
     </>
   )
 }

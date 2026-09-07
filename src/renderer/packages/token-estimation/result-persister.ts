@@ -1,8 +1,8 @@
 import type { Message, MessageFile, MessageLink, TokenCacheKey, TokenCountMap } from '@shared/types'
+import { rendererApplication } from '@/app/renderer-application'
 import { getLogger } from '@/lib/utils'
-import * as chatStore from '@/stores/chatStore'
-import queryClient from '@/stores/queryClient'
-import { getTaskSession, TASK_SESSION_QUERY_KEY, updateTaskSession } from '@/stores/taskSessionStore'
+import { getDraftTokenizationText, getTokenizationTextDigest } from './draft-tokenization'
+import { clearExactTokenizationFallbacks, recordExactTokenizationFallback } from './exact-retry'
 import type { AttachmentType, ContentMode, TaskResult, TokenizerType } from './types'
 
 const log = getLogger('token-estimation:persister')
@@ -22,6 +22,10 @@ interface PendingUpdate {
   updates: {
     tokenCountMap?: Partial<Record<TokenizerType, number>>
     tokenCalculatedAt?: Partial<Record<TokenizerType, number>>
+    /** Source-projection digest each message-text result was computed against. */
+    textDigests?: Partial<Record<TokenizerType, string | undefined>>
+    /** Whether each message-text result is a sampling fallback rather than an exact encode. */
+    textApproximate?: Partial<Record<TokenizerType, boolean>>
     attachments?: AttachmentUpdate[]
   }
 }
@@ -46,15 +50,46 @@ function applyUpdates(msg: Message, updates: PendingUpdate['updates']): Message 
   const updated = { ...msg }
 
   if (updates.tokenCountMap) {
-    updated.tokenCountMap = {
-      ...updated.tokenCountMap,
-      ...updates.tokenCountMap,
-    } as TokenCountMap
-  }
-  if (updates.tokenCalculatedAt) {
-    updated.tokenCalculatedAt = {
-      ...updated.tokenCalculatedAt,
-      ...updates.tokenCalculatedAt,
+    // A message-text result was encoded against a snapshot of the text and
+    // crossed the worker plus this persister's throttle before landing here.
+    // Only entries whose source digest still matches the message's current
+    // projection may merge: an edit in that window would otherwise re-attach
+    // counts of text the message no longer holds, stamped with a fresh
+    // calculatedAt that keeps them trusted indefinitely. A dropped entry
+    // leaves the cache missing, so the analyzer enqueues the new text.
+    const currentDigest = getTokenizationTextDigest(getDraftTokenizationText(updated))
+    const tokenizerTypes = Object.keys(updates.tokenCountMap) as TokenizerType[]
+    const freshTypes = tokenizerTypes.filter((type) => updates.textDigests?.[type] === currentDigest)
+    if (freshTypes.length < tokenizerTypes.length) {
+      log.debug('Dropped stale message-text results', {
+        messageId: msg.id,
+        droppedTypes: tokenizerTypes.filter((type) => !freshTypes.includes(type)),
+      })
+    }
+    if (freshTypes.length > 0) {
+      const tokenCountMap = { ...updated.tokenCountMap } as TokenCountMap
+      const tokenCalculatedAt = { ...updated.tokenCalculatedAt }
+      const tokenCountApproximate = { ...updated.tokenCountApproximate }
+      for (const type of freshTypes) {
+        const tokens = updates.tokenCountMap[type]
+        if (tokens === undefined) continue
+        tokenCountMap[type] = tokens
+        const calculatedAt = updates.tokenCalculatedAt?.[type]
+        if (calculatedAt !== undefined) {
+          tokenCalculatedAt[type] = calculatedAt
+        }
+        // An exact result clears the marker a previous fallback may have left.
+        if (updates.textApproximate?.[type]) {
+          tokenCountApproximate[type] = true
+          recordExactTokenizationFallback(msg.id, type, currentDigest)
+        } else {
+          delete tokenCountApproximate[type]
+          clearExactTokenizationFallbacks(msg.id, type, currentDigest)
+        }
+      }
+      updated.tokenCountMap = tokenCountMap
+      updated.tokenCalculatedAt = tokenCalculatedAt
+      updated.tokenCountApproximate = Object.keys(tokenCountApproximate).length > 0 ? tokenCountApproximate : undefined
     }
   }
 
@@ -108,6 +143,14 @@ class ResultPersister {
       pending.updates.tokenCalculatedAt = {
         ...pending.updates.tokenCalculatedAt,
         [result.tokenizerType]: result.calculatedAt,
+      }
+      pending.updates.textDigests = {
+        ...pending.updates.textDigests,
+        [result.tokenizerType]: result.textDigest,
+      }
+      pending.updates.textApproximate = {
+        ...pending.updates.textApproximate,
+        [result.tokenizerType]: result.approximate === true,
       }
       log.debug('Result added (message-text)', { messageId: result.messageId, tokens: result.tokens })
     } else {
@@ -221,16 +264,12 @@ class ResultPersister {
 
     for (const [sessionId, sessionUpdates] of bySession) {
       try {
-        await chatStore.updateMessages(sessionId, (messages) => applyUpdatesToMessages(messages, sessionUpdates))
+        await rendererApplication.sessions.updateMessages(sessionId, (messages) =>
+          applyUpdatesToMessages(messages, sessionUpdates)
+        )
 
         log.debug('Flush completed for session', { sessionId, updateCount: sessionUpdates.length })
       } catch (error) {
-        const flushedTaskSession = await this.flushTaskSessionUpdates(sessionId, sessionUpdates)
-        if (flushedTaskSession) {
-          log.debug('Flush completed for task session', { sessionId, updateCount: sessionUpdates.length })
-          continue
-        }
-
         log.error('Failed to flush updates for session', { sessionId, error })
       }
     }
@@ -246,23 +285,6 @@ class ResultPersister {
         console.error('[ResultPersister] Listener error:', error)
       }
     }
-  }
-
-  private async flushTaskSessionUpdates(sessionId: string, sessionUpdates: PendingUpdate[]): Promise<boolean> {
-    const taskSession = await getTaskSession(sessionId)
-    if (!taskSession) {
-      return false
-    }
-
-    const messages = applyUpdatesToMessages(taskSession.messages, sessionUpdates)
-    const updated = await updateTaskSession(sessionId, { messages })
-    if (updated) {
-      queryClient.setQueryData([TASK_SESSION_QUERY_KEY, sessionId], updated)
-    } else {
-      queryClient.setQueryData([TASK_SESSION_QUERY_KEY, sessionId], { ...taskSession, messages })
-    }
-
-    return true
   }
 }
 

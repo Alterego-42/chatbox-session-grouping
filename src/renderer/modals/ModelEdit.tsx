@@ -1,19 +1,19 @@
 import NiceModal, { useModal } from '@ebay/nice-modal-react'
-import { Button, Checkbox, Flex, Loader, NumberInput, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import { Button, Checkbox, Flex, Loader, NumberInput, Stack, Text, TextInput, UnstyledButton } from '@mantine/core'
 import type { ProviderModelInfo } from '@shared/types'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createModelDependencies } from '@/adapters'
 import { AdaptiveSelect } from '@/components/AdaptiveSelect'
 import { AdaptiveModal } from '@/components/common/AdaptiveModal'
+import { AppTooltip as Tooltip } from '@/components/ui/tooltip'
 import platform from '@/platform'
-import { useSettingsStore } from '@/stores/settingsStore'
+import { settingsStore } from '@/stores/settingsStore'
 import { type ModelTestState, testModelCapabilities } from '@/utils/model-tester'
 
 const ModelEdit = NiceModal.create((props: { model?: ProviderModelInfo; providerId?: string }) => {
   const modal = useModal()
   const { t } = useTranslation()
-  const settings = useSettingsStore((state) => state)
 
   const isNew = !props.model
   const [modelId, setModelId] = useState(props.model?.modelId || '')
@@ -52,7 +52,7 @@ const ModelEdit = NiceModal.create((props: { model?: ProviderModelInfo; provider
     await testModelCapabilities({
       providerId: props.providerId,
       modelId,
-      settings,
+      settings: settingsStore.getState(),
       configs,
       dependencies,
       onStateChange: (state) => {
@@ -224,10 +224,15 @@ const ModelEdit = NiceModal.create((props: { model?: ProviderModelInfo; provider
               {t('Test successful')}
             </Text>
           ) : testState.basicTest?.status === 'error' ? (
-            <Tooltip label={testState.basicTest.error} multiline maw={300}>
-              <Text c="chatbox-error" style={{ cursor: 'help' }} className="text-center">
+            <Tooltip label={testState.basicTest.error} multiline maw={300} zIndex={3000} openOnTouch>
+              <UnstyledButton
+                type="button"
+                c="chatbox-error"
+                style={{ cursor: 'help', textAlign: 'center' }}
+                className="inline-block"
+              >
                 {t('Test failed')}
-              </Text>
+              </UnstyledButton>
             </Tooltip>
           ) : null}
           <AdaptiveModal.CloseButton onClick={handleCancel} />

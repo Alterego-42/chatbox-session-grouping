@@ -40,30 +40,39 @@ const updateSessionListMock = vi.fn(async (updater: UpdaterFn<SessionMeta[]>) =>
   storageState.sessions = updater(storageState.sessions)
 })
 
-const updateSessionMock = vi.fn(async (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
-  storageState.sessions = storageState.sessions.map((s) =>
-    s.id === sessionId ? ({ ...s, ...updater(s) } as SessionMeta) : s
-  )
-})
+const updateSessionMock = vi.fn(
+  async (sessionId: string, update: Partial<SessionMeta> | UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
+    storageState.sessions = storageState.sessions.map((s) =>
+      s.id === sessionId ? ({ ...s, ...(typeof update === 'function' ? update(s) : update) } as SessionMeta) : s
+    )
+  }
+)
 
 const metaStorageMock = {
+  getAll: vi.fn(async () => storageState.sessions),
+  getAllIncludingHidden: vi.fn(async () => storageState.sessions),
   update: vi.fn(async (id: string, patch: Partial<SessionMeta>) => {
     storageState.sessions = storageState.sessions.map((s) => (s.id === id ? { ...s, ...patch } : s))
     return storageState.sessions.find((s) => s.id === id) ?? null
   }),
 }
 
-vi.mock('../chatStore', () => ({
-  updateSessionList: (updater: UpdaterFn<SessionMeta[]>) => updateSessionListMock(updater),
-  updateSession: (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) =>
-    updateSessionMock(sessionId, updater),
-  updateSessionListData: (updater: (items: SessionMeta[]) => SessionMeta[]) => {
-    storageState.sessions = updater(storageState.sessions)
+vi.mock('@/app/renderer-application', () => ({
+  rendererApplication: {
+    sessions: {
+      updateSession: (sessionId: string, update: Partial<SessionMeta> | UpdaterFn<Omit<SessionMeta, 'messages'>>) =>
+        updateSessionMock(sessionId, update),
+      listAllSessionsMeta: async () => storageState.sessions,
+    },
+    sessionQueryBridge: {
+      updateSessionListData: (updater: (items: SessionMeta[]) => SessionMeta[]) => {
+        storageState.sessions = updater(storageState.sessions)
+      },
+    },
   },
-  listSessionsMeta: async () => storageState.sessions,
-  getMetaStorage: async () => metaStorageMock,
-  invalidateSessionLists: async () => {},
 }))
+vi.mock('../sessionHelpers', () => ({ getMetaStorage: async () => metaStorageMock }))
+vi.mock('./group-queries', () => ({ invalidateSessionLists: () => {} }))
 
 const updateGroupListMock = vi.fn(async (updater: UpdaterFn<SessionGroup[]>) => {
   storageState.groups = updater(storageState.groups)
@@ -123,9 +132,9 @@ describe('session/groups', () => {
     })
     updateSessionMock.mockClear()
     updateSessionMock.mockImplementation(
-      async (sessionId: string, updater: UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
+      async (sessionId: string, update: Partial<SessionMeta> | UpdaterFn<Omit<SessionMeta, 'messages'>>) => {
         storageState.sessions = storageState.sessions.map((s) =>
-          s.id === sessionId ? ({ ...s, ...updater(s) } as SessionMeta) : s
+          s.id === sessionId ? ({ ...s, ...(typeof update === 'function' ? update(s) : update) } as SessionMeta) : s
         )
       }
     )

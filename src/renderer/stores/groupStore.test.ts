@@ -41,6 +41,8 @@ vi.mock('../lib/utils', () => ({
 }))
 
 const metaStorageMock = {
+  getAll: vi.fn(async () => storageState.sessions),
+  getAllIncludingHidden: vi.fn(async () => storageState.sessions),
   update: vi.fn(async (id: string, patch: Partial<SessionMeta>) => {
     storageState.sessions = storageState.sessions.map((s) => (s.id === id ? { ...s, ...patch } : s))
     return storageState.sessions.find((s) => s.id === id) ?? null
@@ -50,11 +52,21 @@ const updateSessionListDataMock = vi.fn((updater: (items: SessionMeta[]) => Sess
   storageState.sessions = updater(storageState.sessions)
 })
 
-vi.mock('./chatStore', () => ({
-  listSessionsMeta: async () => storageState.sessions,
-  getMetaStorage: async () => metaStorageMock,
-  updateSessionListData: (updater: (items: SessionMeta[]) => SessionMeta[]) => updateSessionListDataMock(updater),
-  invalidateSessionLists: async () => {},
+vi.mock('./sessionHelpers', () => ({ getMetaStorage: async () => metaStorageMock }))
+vi.mock('./session/group-queries', () => ({ invalidateSessionLists: () => {} }))
+vi.mock('@/app/renderer-application', () => ({
+  rendererApplication: {
+    queryClient: {
+      setQueryData: vi.fn(),
+      getQueryData: vi.fn(() => undefined),
+      invalidateQueries: vi.fn(async () => undefined),
+      fetchQuery: vi.fn(async (options: { queryFn: () => unknown }) => options.queryFn()),
+    },
+    sessions: { listAllSessionsMeta: async () => storageState.sessions },
+    sessionQueryBridge: {
+      updateSessionListData: (updater: (items: SessionMeta[]) => SessionMeta[]) => updateSessionListDataMock(updater),
+    },
+  },
 }))
 
 async function importFresh() {

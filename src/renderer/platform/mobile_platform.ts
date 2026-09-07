@@ -1,6 +1,7 @@
 import { App } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { Device } from '@capacitor/device'
+import { type AnalyticsEventParams, GOOGLE_ANALYTICS_MEASUREMENT_ID } from '@shared/analytics'
 import * as defaults from '@shared/defaults'
 import type { Config, Settings, ShortcutSetting } from '@shared/types'
 import localforage from 'localforage'
@@ -10,7 +11,6 @@ import type { ImageGenerationStorage } from '@/storage/ImageGenerationStorage'
 import type { SessionMetaStorage } from '@/storage/SessionMetaStorage'
 import { SQLiteImageGenerationStorage } from '@/storage/SQLiteImageGenerationStorage'
 import { SQLiteSessionMetaStorage } from '@/storage/SQLiteSessionMetaStorage'
-import { IndexedDBTaskSessionStorage, type TaskSessionStorage } from '@/storage/TaskSessionStorage'
 import { CHATBOX_BUILD_PLATFORM } from '@/variables'
 import { getBrowser, getOS } from '../packages/navigator'
 import type { Platform, PlatformType } from './interfaces'
@@ -19,16 +19,16 @@ import MobileExporter from './mobile_exporter'
 import mobileLogger from './mobile_logger'
 import type { SessionAttachmentRagController } from './session-attachment-rag/interface'
 import { MobileSQLiteStorage } from './storages'
-import { parseTextFileLocally } from './web_platform_utils'
+import { parseFileLocallyInBrowser } from './web_platform_utils'
 
 export default class MobilePlatform extends MobileSQLiteStorage implements Platform {
   public type: PlatformType = 'mobile'
+  public readonly isDesktopLike = false
 
   public exporter = new MobileExporter()
 
   private navigationCallback: ((path: string) => void) | null = null
   private _imageGenerationStorage: ImageGenerationStorage | null = null
-  private _taskSessionStorage: TaskSessionStorage | null = null
   private _sessionMetaStorage: SessionMetaStorage | null = null
 
   constructor() {
@@ -106,7 +106,48 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
     return () => null
   }
   public onWindowFocused(callback: () => void): () => void {
-    return () => null
+    let cancelled = false
+    let removeAppStateListener: (() => void) | undefined
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        callback()
+      }
+    }
+
+    App.addListener('appStateChange', ({ isActive }) => {
+      if (isActive && !cancelled) {
+        callback()
+      }
+    })
+      .then((handle) => {
+        if (cancelled) {
+          void handle.remove()
+          return
+        }
+        removeAppStateListener = () => {
+          void handle.remove()
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to listen appStateChange:', error)
+      })
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      cancelled = true
+      removeAppStateListener?.()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }
+  public async isWindowFocused(): Promise<boolean> {
+    try {
+      const state = await App.getState()
+      return state.isActive && document.visibilityState === 'visible'
+    } catch {
+      return document.visibilityState === 'visible'
+    }
   }
   public onUpdateDownloaded(callback: () => void): () => void {
     return () => null
@@ -200,26 +241,18 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
   }
 
   public async initTracking() {
-    const GAID = 'G-B365F44W6E'
-    try {
-      const conf = await this.getConfig()
-      window.gtag('config', GAID, {
-        app_name: 'chatbox',
-        user_id: conf.uuid,
-        client_id: conf.uuid,
-        app_version: await this.getVersion(),
-        chatbox_platform_type: 'web',
-        chatbox_platform: await this.getPlatform(),
-        app_platform: await this.getPlatform(),
-      })
-    } catch (e) {
-      window.gtag('config', GAID, {
-        app_name: 'chatbox',
-      })
-      throw e
-    }
+    const conf = await this.getConfig()
+    window.gtag('config', GOOGLE_ANALYTICS_MEASUREMENT_ID, {
+      app_name: 'chatbox',
+      user_id: conf.uuid,
+      client_id: conf.uuid,
+      app_version: await this.getVersion(),
+      chatbox_platform_type: 'mobile',
+      chatbox_platform: await this.getPlatform(),
+      app_platform: await this.getPlatform(),
+    })
   }
-  public trackingEvent(name: string, params: { [key: string]: string }) {
+  public trackingEvent(name: string, params: AnalyticsEventParams) {
     window.gtag('event', name, params)
   }
 
@@ -243,10 +276,10 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
     return
   }
 
-  async parseFileLocally(file: File): Promise<{ key?: string; isSupported: boolean }> {
-    const result = await parseTextFileLocally(file)
+  async parseFileLocally(file: File): Promise<{ key?: string; isSupported: boolean; errorCode?: string }> {
+    const result = await parseFileLocallyInBrowser(file)
     if (!result.isSupported) {
-      return { isSupported: false }
+      return { isSupported: false, errorCode: result.errorCode }
     }
     const key = `parseFile-${uuidv4()}`
     await this.setStoreBlob(key, result.text)
@@ -286,13 +319,6 @@ export default class MobilePlatform extends MobileSQLiteStorage implements Platf
       this._imageGenerationStorage = new SQLiteImageGenerationStorage()
     }
     return this._imageGenerationStorage
-  }
-
-  public getTaskSessionStorage(): TaskSessionStorage {
-    if (!this._taskSessionStorage) {
-      this._taskSessionStorage = new IndexedDBTaskSessionStorage()
-    }
-    return this._taskSessionStorage
   }
 
   public getSessionMetaStorage(): SessionMetaStorage {

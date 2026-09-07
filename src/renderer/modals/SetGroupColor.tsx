@@ -10,16 +10,7 @@ interface Props {
   groupId: string
 }
 
-const GROUP_PRESET_COLORS = [
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-]
+const GROUP_PRESET_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899']
 
 const SetGroupColor = NiceModal.create(({ groupId }: Props) => {
   const modal = useModal()
@@ -81,7 +72,12 @@ const SetGroupColor = NiceModal.create(({ groupId }: Props) => {
           withPicker
         />
         <Flex gap="md" justify="flex-end" align="center" mt="md">
-          <Button variant="subtle" color="chatbox-tertiary" onClick={() => void applyColor(undefined)} disabled={submitting}>
+          <Button
+            variant="subtle"
+            color="chatbox-tertiary"
+            onClick={() => void applyColor(undefined)}
+            disabled={submitting}
+          >
             {t('Reset to Default')}
           </Button>
           <Button variant="default" onClick={onClose} disabled={submitting}>

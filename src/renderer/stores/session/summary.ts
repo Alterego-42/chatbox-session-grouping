@@ -1,6 +1,7 @@
 import { getModel } from '@shared/models'
 import type { Message, ModelProvider } from '@shared/types'
 import { createModelDependencies } from '@/adapters'
+import { rendererApplication } from '@/app/renderer-application'
 import { languageNameMap } from '@/i18n/locales'
 import { generateText } from '@/packages/model-calls'
 import * as promptFormat from '@/packages/prompts'
@@ -9,7 +10,6 @@ import platform from '@/platform'
 import storage from '@/storage'
 import { StorageKeyGenerator } from '@/storage/StoreStorage'
 import { getMessageText } from '../../../shared/utils/message'
-import * as chatStore from '../chatStore'
 import { settingsStore } from '../settingsStore'
 
 // Built-in default prompt template for per-session summaries. Use the literal
@@ -56,7 +56,7 @@ export async function getSessionSummary(sessionId: string): Promise<SummaryReadR
   if (!cached) {
     return { cached: null, stale: false }
   }
-  const session = await chatStore.getSession(sessionId)
+  const session = await rendererApplication.sessions.getSession(sessionId)
   if (!session) {
     return { cached, stale: true }
   }
@@ -71,7 +71,7 @@ export async function deleteSessionSummary(sessionId: string): Promise<void> {
 }
 
 export async function generateSessionSummary(sessionId: string): Promise<SessionSummary> {
-  const session = await chatStore.getSession(sessionId)
+  const session = await rendererApplication.sessions.getSession(sessionId)
   if (!session) {
     throw new Error(`Session ${sessionId} not found`)
   }

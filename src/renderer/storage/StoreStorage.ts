@@ -1,8 +1,8 @@
 import type { DebouncedFunc } from 'lodash'
 import debounce from 'lodash/debounce'
 import { v4 as uuidv4 } from 'uuid'
-import { getBestEffortFileNativePath } from '@/utils/file-native-path'
 import BaseStorage from './BaseStorage'
+import { getFileUniqKey } from './file-uniq-key'
 
 export enum StorageKey {
   ChatSessions = 'chat-sessions',
@@ -32,7 +32,7 @@ export const StorageKeyGenerator = {
     return `file:${sessionId}:${msgId}:${uuidv4()}`
   },
   fileUniqKey(file: File) {
-    return `file:${getBestEffortFileNativePath(file) || file.name}-${file.size}-${file.lastModified}`
+    return getFileUniqKey(file)
   },
   linkUniqKey(url: string) {
     return `link:${url}`

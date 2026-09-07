@@ -1,10 +1,12 @@
 import type { SessionGroup, UpdaterFn } from '@shared/types'
 import { useQuery } from '@tanstack/react-query'
 import { v4 as uuidv4 } from 'uuid'
+import { rendererApplication } from '@/app/renderer-application'
 import storage, { StorageKey } from '@/storage'
 import { getLogger } from '../lib/utils'
-import * as chatStore from './chatStore'
 import queryClient from './queryClient'
+import { invalidateSessionLists } from './session/group-queries'
+import { getMetaStorage } from './sessionHelpers'
 import { UpdateQueue } from './updateQueue'
 
 const log = getLogger('group-store')
@@ -181,12 +183,12 @@ export async function updateGroup(id: string, patch: Partial<Omit<SessionGroup, 
 
 export async function deleteGroup(id: string): Promise<void> {
   // Step (a): clear groupId on all sessions that belong to this group (persist to the meta store)
-  const metaStorage = await chatStore.getMetaStorage()
-  const affected = (await chatStore.listSessionsMeta()).filter((s) => s.groupId === id)
+  const metaStorage = await getMetaStorage()
+  const affected = (await metaStorage.getAllIncludingHidden()).filter((s) => s.groupId === id)
   if (affected.length > 0) {
     await Promise.all(affected.map((s) => metaStorage.update(s.id, { groupId: undefined })))
     const affectedIds = new Set(affected.map((s) => s.id))
-    chatStore.updateSessionListData((items) =>
+    rendererApplication.sessionQueryBridge.updateSessionListData((items) =>
       items.map((it) => (affectedIds.has(it.id) ? { ...it, groupId: undefined } : it))
     )
   }
@@ -195,5 +197,5 @@ export async function deleteGroup(id: string): Promise<void> {
     const existing = groups ?? []
     return existing.filter((g) => g.id !== id)
   })
-  await chatStore.invalidateSessionLists()
+  invalidateSessionLists()
 }

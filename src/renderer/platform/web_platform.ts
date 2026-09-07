@@ -1,3 +1,4 @@
+import { type AnalyticsEventParams, GOOGLE_ANALYTICS_MEASUREMENT_ID } from '@shared/analytics'
 import * as defaults from '@shared/defaults'
 import type { Config, Settings, ShortcutSetting } from '@shared/types'
 import localforage from 'localforage'
@@ -5,7 +6,6 @@ import { v4 as uuidv4 } from 'uuid'
 import { parseLocale } from '@/i18n/parser'
 import { type ImageGenerationStorage, IndexedDBImageGenerationStorage } from '@/storage/ImageGenerationStorage'
 import { IndexedDBSessionMetaStorage, type SessionMetaStorage } from '@/storage/SessionMetaStorage'
-import { IndexedDBTaskSessionStorage, type TaskSessionStorage } from '@/storage/TaskSessionStorage'
 import { getBrowser, getOS } from '../packages/navigator'
 import type { Platform, PlatformType } from './interfaces'
 import type { KnowledgeBaseController } from './knowledge-base/interface'
@@ -13,15 +13,15 @@ import type { SessionAttachmentRagController } from './session-attachment-rag/in
 import { IndexedDBStorage } from './storages'
 import WebExporter from './web_exporter'
 import webLogger from './web_logger'
-import { parseTextFileLocally } from './web_platform_utils'
+import { parseFileLocallyInBrowser } from './web_platform_utils'
 
 export default class WebPlatform extends IndexedDBStorage implements Platform {
   public type: PlatformType = 'web'
+  public readonly isDesktopLike = false
 
   public exporter = new WebExporter()
 
   private imageGenerationStorage: ImageGenerationStorage | null = null
-  private taskSessionStorage: TaskSessionStorage | null = null
   private sessionMetaStorage: SessionMetaStorage | null = null
 
   constructor() {
@@ -51,7 +51,21 @@ export default class WebPlatform extends IndexedDBStorage implements Platform {
     return () => null
   }
   public onWindowFocused(callback: () => void): () => void {
-    return () => null
+    const onFocus = () => callback()
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        callback()
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }
+  public async isWindowFocused(): Promise<boolean> {
+    return document.visibilityState === 'visible' && document.hasFocus()
   }
   public onUpdateDownloaded(callback: () => void): () => void {
     return () => null
@@ -111,26 +125,18 @@ export default class WebPlatform extends IndexedDBStorage implements Platform {
   }
 
   public async initTracking() {
-    const GAID = 'G-B365F44W6E'
-    try {
-      const conf = await this.getConfig()
-      window.gtag('config', GAID, {
-        app_name: 'chatbox',
-        user_id: conf.uuid,
-        client_id: conf.uuid,
-        app_version: await this.getVersion(),
-        chatbox_platform_type: 'web',
-        chatbox_platform: await this.getPlatform(),
-        app_platform: await this.getPlatform(),
-      })
-    } catch (e) {
-      window.gtag('config', GAID, {
-        app_name: 'chatbox',
-      })
-      throw e
-    }
+    const conf = await this.getConfig()
+    window.gtag('config', GOOGLE_ANALYTICS_MEASUREMENT_ID, {
+      app_name: 'chatbox',
+      user_id: conf.uuid,
+      client_id: conf.uuid,
+      app_version: await this.getVersion(),
+      chatbox_platform_type: 'web',
+      chatbox_platform: await this.getPlatform(),
+      app_platform: await this.getPlatform(),
+    })
   }
-  public trackingEvent(name: string, params: { [key: string]: string }) {
+  public trackingEvent(name: string, params: AnalyticsEventParams) {
     window.gtag('event', name, params)
   }
 
@@ -154,10 +160,10 @@ export default class WebPlatform extends IndexedDBStorage implements Platform {
     return
   }
 
-  async parseFileLocally(file: File): Promise<{ key?: string; isSupported: boolean }> {
-    const result = await parseTextFileLocally(file)
+  async parseFileLocally(file: File): Promise<{ key?: string; isSupported: boolean; errorCode?: string }> {
+    const result = await parseFileLocallyInBrowser(file)
     if (!result.isSupported) {
-      return { isSupported: false }
+      return { isSupported: false, errorCode: result.errorCode }
     }
     const key = `parseFile-` + uuidv4()
     await this.setStoreBlob(key, result.text)
@@ -197,13 +203,6 @@ export default class WebPlatform extends IndexedDBStorage implements Platform {
       this.imageGenerationStorage = new IndexedDBImageGenerationStorage()
     }
     return this.imageGenerationStorage
-  }
-
-  public getTaskSessionStorage(): TaskSessionStorage {
-    if (!this.taskSessionStorage) {
-      this.taskSessionStorage = new IndexedDBTaskSessionStorage()
-    }
-    return this.taskSessionStorage
   }
 
   public getSessionMetaStorage(): SessionMetaStorage {

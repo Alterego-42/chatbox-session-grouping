@@ -1,12 +1,18 @@
+/* Desktop Spotlight only. Mobile uses a Vaul drawer with a single overflow scroller. */
 .actionsList {
-  max-height: min(600px, calc(100vh - 180px));
+  min-height: 0;
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
-.actionsList [data-radix-scroll-area-viewport] {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+.actionsList > div {
+  min-height: 0;
 }
 
-.actionsList [data-radix-scroll-area-viewport] > div {
+.actionsList [data-scrollbars] {
+  min-height: 0;
+}
+
+.actionsList [data-scrollbars] > div {
   padding-bottom: 20px;
 }

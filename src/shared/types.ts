@@ -21,6 +21,16 @@ export type ExportChatScope = 'all_threads' | 'current_thread'
 
 export type ExportChatFormat = 'Markdown' | 'TXT' | 'HTML'
 
+// Agent Mode
+export type AgentModeValue = 'auto' | 'on' | 'off'
+export type AgentModeLockReason = 'file_upload' | 'load_skill' | 'message_sent' | null
+
+export interface AgentModeEntry {
+  value: AgentModeValue
+  locked: boolean
+  lockReason: AgentModeLockReason
+}
+
 export function isChatSession(session: Session) {
   return session.type === 'chat' || !session.type
 }
@@ -102,6 +112,10 @@ export interface CopilotDetail {
 export interface Toast {
   id: string
   content: string
+  action?: {
+    label: string
+    settingsPath?: string
+  }
   duration?: number
 }
 
@@ -157,6 +171,23 @@ export interface SessionAttachmentRagDebugSnapshot {
   }>
 }
 
+export interface SessionAttachmentOwnershipClaim {
+  attachmentId: number
+  sessionId: string
+  messageId: string
+}
+
+export interface SessionAttachmentRagMaintenanceScope {
+  sessionIds: string[]
+  messageIds: string[]
+  /**
+   * One live (session, message) claim per indexed attachment id. Rows whose
+   * recorded owner is gone but that a claim can still place are rebound rather
+   * than swept, so a shared attachment survives an owner removal on its own.
+   */
+  attachmentReferences: SessionAttachmentOwnershipClaim[]
+}
+
 export interface SessionAttachmentRagMaintenanceResult {
   interruptedFailedCount: number
   canceledPurgedCount: number
@@ -168,7 +199,6 @@ export type ChatboxAIModel = 'chatboxai-3.5' | 'chatboxai-4' | string
 export function copyMessage(source: Message): Message {
   return {
     ...source,
-    cancel: undefined,
     id: uuidv4(),
   }
 }
@@ -189,13 +219,17 @@ export function copyMessagesWithMapping(messages: Message[]): {
 export function copyMessageForksWithMapping(
   source?: Session['messageForksHash'],
   initialIdMapping?: Map<string, string>
-): Session['messageForksHash'] | undefined {
+): {
+  messageForksHash: Session['messageForksHash'] | undefined
+  /** initialIdMapping extended with ids of messages copied inside fork lists */
+  idMapping: Map<string, string>
+} {
+  const idMapping = new Map(initialIdMapping)
   if (!source || !initialIdMapping?.size) {
-    return undefined
+    return { messageForksHash: undefined, idMapping }
   }
 
   const copiedForks: NonNullable<Session['messageForksHash']> = {}
-  const idMapping = new Map(initialIdMapping)
   const pendingForkIds = [...initialIdMapping.keys()]
   const visitedForkIds = new Set<string>()
 
@@ -220,7 +254,6 @@ export function copyMessageForksWithMapping(
           if (existingId) {
             return {
               ...message,
-              cancel: undefined,
               id: existingId,
             }
           }
@@ -240,7 +273,10 @@ export function copyMessageForksWithMapping(
     }
   }
 
-  return Object.keys(copiedForks).length > 0 ? copiedForks : undefined
+  return {
+    messageForksHash: Object.keys(copiedForks).length > 0 ? copiedForks : undefined,
+    idMapping,
+  }
 }
 
 export function copyThreadsWithMapping(
@@ -262,27 +298,6 @@ export function copyThreadsWithMapping(
     // Use copyMessagesWithMapping for thread messages
     const { messages: newMessages, idMapping: threadIdMapping } = copyMessagesWithMapping(thread.messages)
 
-    // Combine external mapping (if provided) with thread mapping
-    const combinedMapping = new Map([...idMapping, ...threadIdMapping])
-
-    // Map compactionPoints (if they exist)
-    const newCompactionPoints = thread.compactionPoints
-      ?.map((cp) => {
-        const newSummaryId = combinedMapping.get(cp.summaryMessageId)
-        const newBoundaryId = combinedMapping.get(cp.boundaryMessageId)
-        // Skip compactionPoints with unmapped IDs
-        if (!newSummaryId || !newBoundaryId) {
-          console.warn('[copyThreads] Skipping compactionPoint with unmapped IDs', cp)
-          return null
-        }
-        return {
-          ...cp,
-          summaryMessageId: newSummaryId,
-          boundaryMessageId: newBoundaryId,
-        }
-      })
-      .filter((cp): cp is NonNullable<typeof cp> => cp !== null)
-
     for (const [oldId, newId] of threadIdMapping) {
       idMapping.set(oldId, newId)
     }
@@ -292,8 +307,10 @@ export function copyThreadsWithMapping(
       messages: newMessages,
       createdAt: Date.now(),
       id: uuidv4(),
-      // Preserve undefined if no compactionPoints, empty array if had some but all were invalid
-      compactionPoints: newCompactionPoints?.length ? newCompactionPoints : thread.compactionPoints ? [] : undefined,
+      // Copied with source ids; remap with remapCompactionPoints once the
+      // full mapping (threads + fork lists) is known. A thread's boundary or
+      // summary may live in a fork list copied after this function runs.
+      compactionPoints: thread.compactionPoints?.map((cp) => ({ ...cp })),
     }
   })
 
@@ -303,11 +320,46 @@ export function copyThreadsWithMapping(
   }
 }
 
+/**
+ * Remap compaction point message ids after a copy. Points whose boundary or
+ * summary id is missing from the mapping are dropped (the referenced message
+ * was not part of the copy).
+ */
+export function remapCompactionPoints(
+  compactionPoints: CompactionPoint[] | undefined,
+  idMapping: Map<string, string>,
+  logContext: string
+): CompactionPoint[] | undefined {
+  if (!compactionPoints) {
+    return undefined
+  }
+  const remapped = compactionPoints
+    .map((cp) => {
+      const newSummaryId = idMapping.get(cp.summaryMessageId)
+      const newBoundaryId = idMapping.get(cp.boundaryMessageId)
+      if (!newSummaryId || !newBoundaryId) {
+        console.warn(`[${logContext}] Skipping compactionPoint with unmapped IDs`, cp)
+        return null
+      }
+      return {
+        ...cp,
+        summaryMessageId: newSummaryId,
+        boundaryMessageId: newBoundaryId,
+      }
+    })
+    .filter((cp): cp is NonNullable<typeof cp> => cp !== null)
+  return remapped.length ? remapped : undefined
+}
+
 export function copyThreads(source?: SessionThread[], idMapping?: Map<string, string>): SessionThread[] | undefined {
   if (!source) {
     return undefined
   }
-  return copyThreadsWithMapping(source, idMapping).threads
+  const { threads, idMapping: fullIdMapping } = copyThreadsWithMapping(source, idMapping)
+  return threads?.map((thread) => ({
+    ...thread,
+    compactionPoints: remapCompactionPoints(thread.compactionPoints, fullIdMapping, 'copyThreads'),
+  }))
 }
 
 // RAG related types
@@ -376,6 +428,9 @@ export interface SessionAttachment {
   chunkCount?: number
   totalChunks?: number
   embeddedChunks?: number
+  embeddingModel?: string
+  embeddingDimension?: number
+  resumable?: boolean
   indexingStage?: SessionAttachmentIndexingStage
   parserType?: string
   availability: SessionAttachmentAvailability
@@ -418,8 +473,9 @@ export type FileMeta = {
   size: number
 }
 
+export * from './types/agent-persona'
+export * from './types/command-execution'
 export * from './types/image-generation'
 export * from './types/session'
 export * from './types/settings'
 export * from './types/skills'
-export * from './types/task-session'

@@ -1,24 +1,14 @@
 import NiceModal, { useModal } from '@ebay/nice-modal-react'
 import { ActionIcon, Alert, Button, Drawer, Flex, Loader, Stack, Text } from '@mantine/core'
-import {
-  IconAlertTriangle,
-  IconCheck,
-  IconCopy,
-  IconRefresh,
-  IconX,
-} from '@tabler/icons-react'
+import { IconAlertTriangle, IconCheck, IconCopy, IconRefresh, IconX } from '@tabler/icons-react'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import Markdown from '@/components/Markdown'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
+import Markdown from '@/components/Markdown'
 import { useCopied } from '@/hooks/useCopied'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
-import {
-  type SessionSummary as SessionSummaryData,
-  generateSessionSummary,
-  getSessionSummary,
-} from '@/stores/sessionActions'
+import { generateSessionSummary, getSessionSummary, type SessionSummary as SessionSummaryData } from '@/stores/session'
 import { add as addToast } from '@/stores/toastActions'
 
 interface Props {
@@ -114,13 +104,7 @@ const SessionSummary = NiceModal.create(({ sessionId }: Props) => {
       styles={{ body: { padding: 0, height: '100%' } }}
     >
       <Flex direction="column" className="h-full">
-        <Flex
-          align="center"
-          gap="sm"
-          px="md"
-          py="sm"
-          className="border-b border-solid border-chatbox-border-secondary"
-        >
+        <Flex align="center" gap="sm" px="md" py="sm" className="border-b border-solid border-chatbox-border-secondary">
           <Text fw={600} flex={1}>
             {t('Session Summary')}
           </Text>
@@ -158,11 +142,7 @@ const SessionSummary = NiceModal.create(({ sessionId }: Props) => {
         <div className="flex-1 overflow-y-auto">
           <Stack gap="sm" p="md">
             {showStaleBanner && (
-              <Alert
-                color="yellow"
-                icon={<IconAlertTriangle size={16} />}
-                title={t('Summary may be outdated')}
-              >
+              <Alert color="yellow" icon={<IconAlertTriangle size={16} />} title={t('Summary may be outdated')}>
                 <Button
                   size="compact-sm"
                   variant="light"

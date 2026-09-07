@@ -26,9 +26,13 @@ export function normalizeOpenAIApiHostAndPath(
   if (apiPath && !apiPath.startsWith('/')) {
     apiPath = '/' + apiPath
   }
-  // https 协议
-  if (apiHost && !apiHost.startsWith('http://') && !apiHost.startsWith('https://')) {
-    apiHost = 'https://' + apiHost
+  // URL schemes are case-insensitive. Mobile keyboards may capitalize the first
+  // character, so normalize an explicit HTTP(S) scheme before applying defaults.
+  const scheme = apiHost.match(/^https?:\/\//i)?.[0]
+  if (scheme) {
+    apiHost = `${scheme.toLowerCase()}${apiHost.slice(scheme.length)}`
+  } else {
+    apiHost = `https://${apiHost}`
   }
   // 如果用户在 host 配置了完整的 host+path 接口地址
   // 可以兼容的输入情况有：
@@ -108,12 +112,18 @@ export function normalizeGeminiHost(apiHost: string) {
 }
 
 export function normalizeAzureEndpoint(endpoint: string) {
-  let origin = endpoint
+  const value = endpoint.trim()
+  const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(value)
+  const looksLikeHost = value === 'localhost' || value.includes('.') || value.includes(':') || value.startsWith('[')
+  const endpointUrl = hasScheme ? value : looksLikeHost ? `https://${value}` : `https://${value}.openai.azure.com`
+  let origin = endpointUrl
   try {
-    origin = new URL(endpoint.trim()).origin
-  } catch (_error) {
-    origin = `https://${origin}.openai.azure.com`
+    origin = new URL(endpointUrl).origin
+  } catch {
+    // Keep placeholders and partially entered settings renderable. The actual
+    // request path will still surface an invalid URL when the user tests it.
   }
+
   return {
     endpoint: `${origin}/openai`,
     apiPath: '/chat/completions',

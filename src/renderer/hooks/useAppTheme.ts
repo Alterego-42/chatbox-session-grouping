@@ -1,4 +1,5 @@
 import { createTheme, type ThemeOptions } from '@mui/material/styles'
+import { getDefaultInterfaceColors, resolveInterfaceBrandColor } from '@shared/theme-colors'
 import { useLayoutEffect, useMemo } from 'react'
 import { settingsStore, useLanguage, useSettingsStore } from '@/stores/settingsStore'
 import { uiStore, useUIStore } from '@/stores/uiStore'
@@ -24,6 +25,7 @@ export const switchTheme = async (theme: Theme) => {
 
 export default function useAppTheme() {
   const theme = useSettingsStore((state) => state.theme)
+  const interfaceColors = useSettingsStore((state) => state.interfaceColors ?? getDefaultInterfaceColors())
   const realTheme = useUIStore((state) => state.realTheme)
   const language = useLanguage()
 
@@ -49,14 +51,37 @@ export default function useAppTheme() {
     }
   }, [realTheme])
 
-  const themeObj = useMemo(() => createTheme(getThemeDesign(realTheme, language)), [realTheme, language])
+  useLayoutEffect(() => {
+    const colors = interfaceColors[realTheme]
+    const brandColor = resolveInterfaceBrandColor(colors.brand, realTheme)
+    const rootStyle = document.documentElement.style
+    rootStyle.setProperty('--chatbox-background-primary', colors.backgroundPrimary)
+    rootStyle.setProperty('--chatbox-background-secondary', colors.backgroundSecondary)
+    rootStyle.setProperty('--chatbox-background-tertiary', colors.backgroundTertiary)
+    rootStyle.setProperty('--chatbox-brand', brandColor)
+  }, [interfaceColors, realTheme])
+
+  const themeObj = useMemo(
+    () =>
+      createTheme(
+        getThemeDesign(realTheme, language, resolveInterfaceBrandColor(interfaceColors[realTheme].brand, realTheme))
+      ),
+    [interfaceColors, language, realTheme]
+  )
   return themeObj
 }
 
-export function getThemeDesign(realTheme: 'light' | 'dark', language: Language): ThemeOptions {
+export function getThemeDesign(
+  realTheme: 'light' | 'dark',
+  language: Language,
+  brandColor = getDefaultInterfaceColors()[realTheme].brand
+): ThemeOptions {
   return {
     palette: {
       mode: realTheme,
+      primary: {
+        main: brandColor,
+      },
       ...(realTheme === 'light'
         ? {}
         : {

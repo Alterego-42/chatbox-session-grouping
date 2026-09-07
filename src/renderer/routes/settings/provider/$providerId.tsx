@@ -11,8 +11,8 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
 } from '@mantine/core'
+import { TestId } from '@shared/automation/testids'
 import { SystemProviders } from '@shared/defaults'
 import { type OAuthProviderInfo, toOAuthProviderId, toOAuthSettingsProviderId } from '@shared/oauth'
 import { getProviderDefinition } from '@shared/providers'
@@ -54,6 +54,7 @@ import { AdaptiveModal } from '@/components/common/AdaptiveModal'
 import PopoverConfirm from '@/components/common/PopoverConfirm'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
 import { ModelList } from '@/components/ModelList'
+import { AppTooltip as Tooltip } from '@/components/ui/tooltip'
 import { useOAuth } from '@/hooks/useOAuth'
 import { useOAuthProviders } from '@/hooks/useOAuthProviders'
 import { enrichModelsFromRegistry, forceRefreshRegistry, useModelRegistryVersion } from '@/packages/model-registry'
@@ -86,6 +87,12 @@ const BUILTIN_API_HOST_PROVIDERS = new Set<string>([
   ModelProviderEnum.Ollama,
   ModelProviderEnum.LMStudio,
   ModelProviderEnum.VercelAIGateway,
+  ModelProviderEnum.OpenCodeGo,
+  ModelProviderEnum.OpenCodeZen,
+  ModelProviderEnum.TencentHunyuan,
+  ModelProviderEnum.XiaomiMiMo,
+  ModelProviderEnum.LongCat,
+  ModelProviderEnum.ZhipuGLMCodingPlan,
 ])
 
 const OAUTH_ONLY_PROVIDERS = new Set<string>([ModelProviderEnum.QwenPortal])
@@ -502,6 +509,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
             }}
           >
             <Button
+              data-testid={TestId.settings.providerDelete}
               variant="transparent"
               size="compact-xs"
               leftSection={<ScalableIcon icon={IconTrash} size={24} />}
@@ -530,6 +538,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                 {t('Name')}
               </Text>
               <TextInput
+                data-testid={TestId.settings.providerName}
                 flex={1}
                 value={baseInfo.name}
                 onChange={(e) => {
@@ -547,6 +556,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                 {t('API Mode')}
               </Text>
               <AdaptiveSelect
+                data-testid={TestId.settings.providerApiMode}
                 value={baseInfo.type}
                 onChange={(value) => {
                   setSettings({
@@ -672,12 +682,14 @@ function ProviderSettings({ providerId }: { providerId: string }) {
               </Flex>
               <Flex gap="xs" align="center">
                 <PasswordInput
+                  data-testid={TestId.settings.providerApiKey}
                   flex={1}
                   value={providerSettings?.apiKey || ''}
                   onChange={handleApiKeyChange}
                   disabled={isOAuthActive}
                 />
                 <Tooltip
+                  openOnTouch
                   disabled={!!providerSettings?.apiKey && displayModels.length > 0}
                   label={
                     !providerSettings?.apiKey
@@ -688,6 +700,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                   }
                 >
                   <Button
+                    data-testid={TestId.settings.providerCheck}
                     size="sm"
                     disabled={isOAuthActive || !providerSettings?.apiKey || displayModels.length === 0}
                     loading={modelTestResult?.testing || false}
@@ -713,14 +726,18 @@ function ProviderSettings({ providerId }: { providerId: string }) {
             </Flex>
             <Flex gap="xs" align="center">
               <TextInput
+                data-testid={TestId.settings.providerApiHost}
                 flex={1}
-                value={providerSettings?.apiHost}
-                placeholder={baseInfo.defaultSettings?.apiHost}
+                value={providerSettings?.apiHost || baseInfo.defaultSettings?.apiHost || ''}
                 onChange={handleApiHostChange}
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
               />
             </Flex>
             <Text span size="xs" flex="0 1 auto" c="chatbox-secondary">
-              {normalizedBuiltinApiHost.apiHost + normalizedBuiltinApiHost.apiPath}
+              {t('Preview')}: {normalizedBuiltinApiHost.apiHost + normalizedBuiltinApiHost.apiPath}
             </Text>
           </Stack>
         )}
@@ -738,10 +755,15 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                   </Flex>
                   <Flex gap="xs" align="center">
                     <TextInput
+                      data-testid={TestId.settings.providerApiHost}
                       flex={1}
                       value={providerSettings?.apiHost}
                       placeholder={baseInfo.defaultSettings?.apiHost}
                       onChange={handleApiHostChange}
+                      inputMode="url"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                     />
                   </Flex>
                 </Stack>
@@ -754,6 +776,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                   </Flex>
                   <Flex gap="xs" align="center">
                     <TextInput
+                      data-testid={TestId.settings.providerApiPath}
                       flex={1}
                       value={providerSettings?.apiPath}
                       onChange={handleApiPathChange}
@@ -763,6 +786,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                 </Stack>
               </Flex>
               <Text span size="xs" flex="0 1 auto" c="chatbox-secondary">
+                {t('Preview')}:{' '}
                 {normalizeAPIHost(providerSettings, baseInfo.type).apiHost +
                   normalizeAPIHost(providerSettings, baseInfo.type).apiPath}
               </Text>
@@ -778,6 +802,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
 
             <Switch
               label={t('Improve Network Compatibility')}
+              description={t('Only enable this when necessary, as it may reduce connection speed.')}
               checked={providerSettings?.useProxy || false}
               onChange={(e) =>
                 setProviderSettings({
@@ -788,10 +813,11 @@ function ProviderSettings({ providerId }: { providerId: string }) {
           </>
         )}
 
-        {/* useProxy for Ollama */}
+        {/* Network compatibility setting for Ollama */}
         {baseInfo.id === ModelProviderEnum.Ollama && (
           <Switch
             label={t('Improve Network Compatibility')}
+            description={t('Only enable this when necessary, as it may reduce connection speed.')}
             checked={providerSettings?.useProxy || false}
             onChange={(e) =>
               setProviderSettings({
@@ -810,6 +836,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
               </Text>
               <Flex gap="xs" align="center">
                 <TextInput
+                  data-testid={TestId.settings.providerAzureEndpoint}
                   flex={1}
                   value={providerSettings?.endpoint}
                   placeholder="https://<resource_name>.openai.azure.com/"
@@ -836,9 +863,10 @@ function ProviderSettings({ providerId }: { providerId: string }) {
               </Text>
               <Flex gap="xs" align="center">
                 <TextInput
+                  data-testid={TestId.settings.providerAzureApiVersion}
                   flex={1}
                   value={providerSettings?.apiVersion}
-                  placeholder="2024-05-01-preview"
+                  placeholder="v1"
                   onChange={(e) =>
                     setProviderSettings({
                       apiVersion: e.currentTarget.value,
@@ -903,6 +931,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
 
             <Flex gap="xs" align="center">
               <Tooltip
+                openOnTouch
                 disabled={!!providerSettings?.accessKey && !!providerSettings?.secretKey && displayModels.length > 0}
                 label={
                   !providerSettings?.accessKey || !providerSettings?.secretKey
@@ -913,6 +942,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                 }
               >
                 <Button
+                  data-testid={TestId.settings.providerCheck}
                   size="sm"
                   disabled={!providerSettings?.accessKey || !providerSettings?.secretKey || displayModels.length === 0}
                   loading={modelTestResult?.testing || false}
@@ -933,6 +963,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
             </Text>
             <Flex gap="sm" align="center" justify="flex-end">
               <Button
+                data-testid={TestId.settings.providerModelNew}
                 variant="light"
                 size="compact-xs"
                 px="sm"
@@ -943,6 +974,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
               </Button>
 
               <Button
+                data-testid={TestId.settings.providerModelReset}
                 variant="light"
                 color="chatbox-gray"
                 c="chatbox-secondary"
@@ -955,6 +987,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
               </Button>
 
               <Button
+                data-testid={TestId.settings.providerModelFetch}
                 loading={fetchingModels}
                 variant="light"
                 color="chatbox-gray"
@@ -1159,7 +1192,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                           <ScalableIcon icon={IconCircleCheck} color="var(--chatbox-tint-success)" />
                         ) : modelTestResult.visionTest?.status === 'error' ? (
                           <Flex align="center" gap="xs" maw={400}>
-                            <Tooltip label={modelTestResult.visionTest.error} multiline>
+                            <Tooltip label={modelTestResult.visionTest.error} multiline openOnTouch>
                               <ScalableIcon icon={IconX} className="cursor-help" color="var(--chatbox-tint-error)" />
                             </Tooltip>
                             <Text>{t('This model does not support vision')}</Text>
@@ -1181,7 +1214,7 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                           <ScalableIcon icon={IconCircleCheck} color="var(--chatbox-tint-success)" />
                         ) : modelTestResult.toolTest?.status === 'error' ? (
                           <Flex align="center" gap="xs" maw={400}>
-                            <Tooltip label={modelTestResult.toolTest.error} multiline>
+                            <Tooltip label={modelTestResult.toolTest.error} multiline openOnTouch>
                               <ScalableIcon icon={IconX} className="cursor-help" color="var(--chatbox-tint-error)" />
                             </Tooltip>
                             <Text>{t('This model does not support tool use')}</Text>
@@ -1200,7 +1233,9 @@ function ProviderSettings({ providerId }: { providerId: string }) {
                 ) : modelTestResult.basicTest?.status === 'error' ? (
                   <Flex align="center" gap="xs" className="w-full">
                     <Text span c="chatbox-error" maw="100%">
-                      {t('Connection failed!')}
+                      {t(
+                        'Connection failed! Please make sure the API key was copied completely, has no extra spaces, has sufficient balance, matches the provider, and has not expired.'
+                      )}
                       <div className="bg-red-50 dark:bg-red-900/20 px-2 py-2">
                         <Text size="xs" c="chatbox-error">
                           {modelTestResult.basicTest.error}

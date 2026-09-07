@@ -1,28 +1,37 @@
-import { isFirstDay } from '../hooks/useVersion'
-import { initSettingsStore } from '../stores/settingsStore'
+import {
+  normalizePlausibleUrl,
+  normalizePlausibleVersion,
+  type Plausible,
+  type PlausibleOptions,
+} from '../analytics/plausible'
 import platform from '../platform'
-;(async () => {
+import { initSettingsStore, settingsStore } from '../stores/settingsStore'
+
+export type PlausibleNavigationSubscriber = (onResolved: (hrefChanged: boolean) => void) => void
+
+export async function initPlausibleTracking(subscribeToNavigation?: PlausibleNavigationSubscriber): Promise<void> {
   try {
     const settings = await initSettingsStore()
-    if (!settings.allowReportingAndTracking) {
-      return
-    }
-
-    const version = await platform.getVersion().catch(() => 'unknown')
-    const is_first_day = isFirstDay()
+    const version = normalizePlausibleVersion(await platform.getVersion().catch(() => 'unknown'))
 
     // 设置 Plausible 全局属性
     if (window.plausible) {
-      // 为所有后续的 pageview 和事件设置默认属性
+      // 统一使用脱敏 URL，并只为功能事件补充低基数版本属性。
       const originalPlausible = window.plausible
-      const enhancedPlausible = (event: string, options?: { props?: Record<string, unknown> }) => {
-        const enhancedOptions = {
+      const enhancedPlausible: Plausible = (event, options) => {
+        if (!settingsStore.getState().allowReportingAndTracking) {
+          return
+        }
+
+        const enhancedOptions: PlausibleOptions = {
           ...options,
-          props: {
+          u: normalizePlausibleUrl(window.location.href),
+        }
+        if (event !== 'pageview') {
+          enhancedOptions.props = {
             ...options?.props,
             version,
-            is_first_day,
-          },
+          }
         }
         return originalPlausible(event, enhancedOptions)
       }
@@ -33,8 +42,35 @@ import platform from '../platform'
       }
 
       window.plausible = enhancedPlausible
+
+      let lastTrackedUrl: string | undefined
+      const trackPageView = () => {
+        const normalizedUrl = normalizePlausibleUrl(window.location.href)
+        if (normalizedUrl === lastTrackedUrl) {
+          return
+        }
+        lastTrackedUrl = normalizedUrl
+        enhancedPlausible('pageview', { u: normalizedUrl })
+      }
+
+      if (settings.allowReportingAndTracking) {
+        trackPageView()
+      }
+
+      subscribeToNavigation?.((hrefChanged) => {
+        if (hrefChanged) {
+          trackPageView()
+        }
+      })
+
+      settingsStore.subscribe((state, previousState) => {
+        if (state.allowReportingAndTracking && !previousState.allowReportingAndTracking) {
+          lastTrackedUrl = undefined
+          trackPageView()
+        }
+      })
     }
   } catch (e) {
     console.error('Failed to initialize Plausible with version:', e)
   }
-})()
+}

@@ -1,8 +1,22 @@
-import type { CompactionPoint, Message, MessageContentParts } from '../types'
-import type { AttachmentResolver, ContextBuilderOptions } from './types'
+import { isTextFilePath } from '../file-extensions'
+import {
+  sandboxAttachmentIdentity,
+  sandboxAttachmentParsedRelPath,
+  sandboxAttachmentRelPath,
+} from '../sandbox/attachment-path'
+import type { CompactionPoint, Message, MessageContentParts, MessageContentToolCallPart } from '../types'
+import { orderSteeredMessagesForModel } from '../utils/message'
+import { findLatestApplicableCompactionPoint } from './compaction-points'
+import { isContextEligibleMessage } from './message-eligibility'
+import { findRecentRoundsStartIndex } from './rounds'
+import type { AttachmentResolver, ContextBuilderOptions, ContextSelectionOptions, ToolCleanupMode } from './types'
 
 const MAX_INLINE_FILE_LINES = 500
 const PREVIEW_LINES = 100
+
+/** Serialized args longer than this are downgraded to a preview when a part is stubbed. */
+const STUB_ARGS_MAX_CHARS = 2_000
+const STUB_ARGS_PREVIEW_CHARS = 500
 
 /**
  * Build context for AI from messages.
@@ -13,133 +27,185 @@ export async function buildContext(messages: Message[], options: ContextBuilderO
     attachmentResolver,
     maxContextMessageCount,
     compactionPoints,
+    toolCleanupMode,
     keepToolCallRounds = 2,
+    preserveToolCallMessageIds,
     modelSupportToolUseForFile = false,
+    sandboxMode = false,
   } = options
 
   if (messages.length === 0) {
     return []
   }
 
-  const completedMessages = messages.filter((m) => !m.generating)
+  let contextMessages = selectContextMessages(messages, { compactionPoints, maxContextMessageCount })
+
+  if (contextMessages.length === 0) {
+    return []
+  }
+
+  contextMessages = applyToolCleanup(contextMessages, toolCleanupMode, keepToolCallRounds, preserveToolCallMessageIds)
+
+  contextMessages = await injectAttachments(
+    contextMessages,
+    attachmentResolver,
+    modelSupportToolUseForFile,
+    sandboxMode
+  )
+
+  return contextMessages
+}
+
+/**
+ * The message-selection half of context building: causal ordering, eligibility,
+ * compaction-point slicing, error filtering, and the message-count limit —
+ * everything that decides WHICH messages are in context, with their content
+ * untouched. Exposed so pressure estimation can measure exactly the selection
+ * the send path will use. Returns the original message references.
+ */
+export function selectContextMessages(messages: Message[], options: ContextSelectionOptions = {}): Message[] {
+  const { compactionPoints, maxContextMessageCount } = options
+
+  // Legacy steering records stored the steered user after the assistant reply
+  // it interrupted; restore causal order before compaction and message limits
+  // so it is never replayed as an unanswered trailing turn. Current records are
+  // already persisted in true causal order and pass through unchanged.
+  const completedMessages = orderSteeredMessagesForModel(messages).filter(isContextEligibleMessage)
 
   if (completedMessages.length === 0) {
     return []
   }
 
-  let contextMessages = applyCompaction(completedMessages, compactionPoints, keepToolCallRounds)
+  let contextMessages = applyCompaction(completedMessages, compactionPoints)
 
-  contextMessages = filterErrorMessages(contextMessages)
+  contextMessages = contextMessages.filter((m) => !m.error && !m.errorCode)
 
   if (maxContextMessageCount !== undefined && maxContextMessageCount < Number.MAX_SAFE_INTEGER) {
     contextMessages = applyMessageLimit(contextMessages, maxContextMessageCount)
   }
 
-  contextMessages = await injectAttachments(contextMessages, attachmentResolver, modelSupportToolUseForFile)
-
   return contextMessages
 }
 
-function applyCompaction(
-  messages: Message[],
-  compactionPoints: CompactionPoint[] | undefined,
-  keepToolCallRounds: number
-): Message[] {
-  const latestCompactionPoint = findLatestCompactionPoint(compactionPoints)
+function applyCompaction(messages: Message[], compactionPoints: CompactionPoint[] | undefined): Message[] {
+  const latestCompactionPoint = findLatestApplicableCompactionPoint(messages, compactionPoints)
 
+  // A summary may only enter context as the stand-in of an applied compaction
+  // point. In fallback paths any summary on the current path is orphaned (its
+  // boundary lives on another branch or its point was lost) and would leak a
+  // summary of other content alongside the full history.
   if (!latestCompactionPoint) {
-    return cleanToolCalls(messages, keepToolCallRounds)
+    return messages.filter((m) => !m.isSummary)
   }
 
   const boundaryIndex = messages.findIndex((m) => m.id === latestCompactionPoint.boundaryMessageId)
   const summaryMessage = messages.find((m) => m.id === latestCompactionPoint.summaryMessageId)
 
-  if (boundaryIndex === -1) {
-    return cleanToolCalls(messages, keepToolCallRounds)
+  // findLatestApplicableCompactionPoint guarantees both exist in `messages`.
+  if (boundaryIndex === -1 || !summaryMessage) {
+    return messages.filter((m) => !m.isSummary)
   }
 
   const messagesAfterBoundary = messages.slice(boundaryIndex + 1).filter((m) => !m.isSummary)
 
-  let contextMessages: Message[]
-  if (summaryMessage) {
-    contextMessages = [summaryMessage, ...messagesAfterBoundary]
-  } else {
-    contextMessages = messagesAfterBoundary
-  }
+  let contextMessages: Message[] = [summaryMessage, ...messagesAfterBoundary]
 
   const systemMessage = messages.find((m) => m.role === 'system')
   if (systemMessage && !contextMessages.some((m) => m.id === systemMessage.id)) {
     contextMessages = [systemMessage, ...contextMessages]
   }
 
-  return cleanToolCalls(contextMessages, keepToolCallRounds)
+  return contextMessages
 }
 
-function findLatestCompactionPoint(compactionPoints?: CompactionPoint[]): CompactionPoint | undefined {
-  if (!compactionPoints || compactionPoints.length === 0) {
-    return undefined
-  }
-  return compactionPoints.reduce((latest, current) => {
-    return current.createdAt > latest.createdAt ? current : latest
-  })
-}
-
-function cleanToolCalls(messages: Message[], keepRounds: number): Message[] {
-  if (messages.length === 0 || keepRounds < 0) {
+function applyToolCleanup(
+  messages: Message[],
+  mode: ToolCleanupMode,
+  keepRounds: number,
+  preserveToolCallMessageIds: string[] | undefined
+): Message[] {
+  if (mode === 'none' || messages.length === 0 || keepRounds < 0) {
     return messages.map((m) => ({ ...m }))
   }
 
-  const roundBoundaryIndex = findRoundBoundaryIndex(messages, keepRounds)
+  const roundBoundaryIndex = findRecentRoundsStartIndex(messages, keepRounds)
+  const preserveToolCallMessageIdSet = new Set(preserveToolCallMessageIds ?? [])
 
   return messages.map((message, index) => {
-    if (index >= roundBoundaryIndex) {
+    if (index >= roundBoundaryIndex || preserveToolCallMessageIdSet.has(message.id)) {
       return { ...message }
     }
-    return removeToolCallParts(message)
+    return stubToolResultParts(message)
   })
 }
 
-function findRoundBoundaryIndex(messages: Message[], keepRounds: number): number {
-  if (keepRounds === 0) {
-    return messages.length
-  }
-
-  let roundCount = 0
-  let inRound = false
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const role = messages[i].role
-
-    if (role === 'assistant') {
-      inRound = true
-    } else if (role === 'user' && inRound) {
-      roundCount++
-      inRound = false
-
-      if (roundCount >= keepRounds) {
-        return i
-      }
-    }
-  }
-
-  return 0
-}
-
-function removeToolCallParts(message: Message): Message {
+/**
+ * Pressure relief that keeps the action record: the call (name + args) stays so
+ * the model still knows what it did, while the bulky result payload is replaced
+ * with a stub the model can act on (re-run the tool, or read the offloaded blob
+ * back via read_file). Error results stay intact — they are small and their
+ * diagnostics matter. Oversized args (e.g. written file content) are cut to a
+ * preview while remaining a JSON object, which the wire format requires.
+ */
+function stubToolResultParts(message: Message): Message {
   if (!message.contentParts || message.contentParts.length === 0) {
     return { ...message }
   }
 
-  const filteredParts: MessageContentParts = message.contentParts.filter((part) => part.type !== 'tool-call')
+  let changed = false
+  const parts: MessageContentParts = message.contentParts.map((part) => {
+    if (part.type !== 'tool-call' || part.state !== 'result') {
+      return part
+    }
+    changed = true
+    return stubToolResultPart(part)
+  })
 
-  return {
-    ...message,
-    contentParts: filteredParts,
+  if (!changed) {
+    return { ...message }
   }
+
+  return { ...message, contentParts: parts }
 }
 
-function filterErrorMessages(messages: Message[]): Message[] {
-  return messages.filter((m) => !m.error && !m.errorCode)
+function stubToolResultPart(part: MessageContentToolCallPart): MessageContentToolCallPart {
+  const result: Record<string, unknown> = part.resultStorageKey
+    ? {
+        _cleared: true,
+        fullResultFileKey: part.resultStorageKey,
+        note: 'Old tool result cleared to save context space. Use the read_file tool with fullResultFileKey to re-read it if needed.',
+      }
+    : {
+        _cleared: true,
+        note: 'Old tool result cleared to save context space. Call the tool again if this result is needed.',
+      }
+
+  const stubbed: MessageContentToolCallPart = {
+    ...part,
+    result,
+    resultStorageKey: undefined,
+  }
+
+  const serializedArgs = serializeArgsLength(part.args)
+  if (serializedArgs !== null && serializedArgs.length > STUB_ARGS_MAX_CHARS) {
+    stubbed.args = {
+      _cleared: true,
+      preview: serializedArgs.slice(0, STUB_ARGS_PREVIEW_CHARS),
+      note: 'Args truncated together with the cleared result.',
+    }
+  }
+
+  return stubbed
+}
+
+function serializeArgsLength(args: unknown): string | null {
+  if (args == null) return null
+  if (typeof args === 'string') return args
+  try {
+    return JSON.stringify(args) ?? null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -154,20 +220,35 @@ function applyMessageLimit(messages: Message[], maxCount: number): Message[] {
   // maxCount limits history, +1 for the current input (last message)
   const effectiveLimit = maxCount + 1
 
-  const result = workingMsgs.slice(-effectiveLimit).map((m) => ({ ...m }))
-
-  if (head) {
-    result.unshift({ ...head })
+  const overflow = workingMsgs.length - effectiveLimit
+  if (overflow <= 0) {
+    return head ? [head, ...workingMsgs] : [...workingMsgs]
   }
 
-  return result
+  // Sticky window: advance the drop boundary in whole chunks instead of
+  // sliding one message per turn. A per-turn slide rewrites the start of the
+  // request every round, invalidating the provider prompt-cache prefix; a
+  // chunked boundary stays fixed (cache hit) until the overflow crosses the
+  // next chunk, at the cost of briefly serving up to chunk-1 messages fewer
+  // than the configured limit.
+  const chunk = Math.max(1, Math.ceil(effectiveLimit / 4))
+  const dropCount = Math.ceil(overflow / chunk) * chunk
+  const result = workingMsgs.slice(dropCount)
+
+  return head ? [head, ...result] : result
 }
 
 async function injectAttachments(
   messages: Message[],
   resolver: AttachmentResolver,
-  modelSupportToolUseForFile: boolean
+  modelSupportToolUseForFile: boolean,
+  sandboxMode: boolean
 ): Promise<Message[]> {
+  // In sandbox mode, inject the same attachment XML envelope but keep file content out of the prompt.
+  if (sandboxMode) {
+    return messages.map((msg) => injectSandboxFileMetadata(msg))
+  }
+
   const allStorageKeys = new Set<string>()
   for (const msg of messages) {
     if (msg.files) {
@@ -202,6 +283,56 @@ async function injectAttachments(
   }
 
   return messages.map((msg) => processMessageAttachments(msg, attachmentContents, modelSupportToolUseForFile))
+}
+
+function formatFileSize(bytes: number | undefined): string {
+  if (!bytes) return 'unknown'
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+function escapeXmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function injectSandboxFileMetadata(msg: Message): Message {
+  const hasFiles = msg.files && msg.files.length > 0
+
+  if (!hasFiles) {
+    return { ...msg }
+  }
+
+  let result = { ...msg }
+  let index = 1
+
+  if (msg.files) {
+    for (const file of msg.files) {
+      const isText = isTextFilePath(file.name)
+      const sandboxPath = sandboxAttachmentRelPath(file.name, sandboxAttachmentIdentity(file))
+      const attachment = buildSandboxAttachment({
+        index: index++,
+        name: file.name,
+        key: file.sessionAttachmentId ? `session-attachment:${file.sessionAttachmentId}` : (file.storageKey ?? file.id),
+        size: formatFileSize(file.byteLength),
+        sandboxPath,
+        parsedSandboxPath:
+          !isText && file.storageKey && file.parserType !== 'sandbox-raw'
+            ? sandboxAttachmentParsedRelPath(sandboxPath)
+            : undefined,
+        retrieval:
+          file.ragMode === 'session-retrieval'
+            ? {
+                status: file.sessionAttachmentIndexStatus ?? file.sessionAttachmentStatus ?? 'pending',
+                blockedReason: file.sessionAttachmentBlockedReason,
+              }
+            : undefined,
+      })
+      result = mergeAttachmentContent(result, attachment)
+    }
+  }
+
+  return result
 }
 
 function processMessageAttachments(
@@ -340,6 +471,58 @@ function buildRetrievalAttachment(params: {
     'answer normally without retrieval.',
     '</SYSTEM_REMINDER>\n',
   ].join('')
+  text += '</ATTACHMENT_FILE>\n'
+  return text
+}
+
+function buildSandboxAttachment(params: {
+  index: number
+  name: string
+  key: string
+  size: string
+  sandboxPath: string
+  parsedSandboxPath?: string
+  retrieval?: {
+    status: string
+    blockedReason?: string
+  }
+}): string {
+  const { index, name, key, size, sandboxPath, parsedSandboxPath, retrieval } = params
+  let text = '\n\n<ATTACHMENT_FILE>\n'
+  text += `<FILE_INDEX>${index}</FILE_INDEX>\n`
+  text += `<FILE_NAME>${escapeXmlText(name)}</FILE_NAME>\n`
+  text += `<FILE_KEY>${escapeXmlText(key)}</FILE_KEY>\n`
+  text += `<FILE_SIZE>${escapeXmlText(size)}</FILE_SIZE>\n`
+  text += '<FILE_CONTENT>\n'
+  text += '</FILE_CONTENT>\n'
+  text += '<SANDBOX_MODE>true</SANDBOX_MODE>\n'
+  text += `<SANDBOX_PATH>${escapeXmlText(sandboxPath)}</SANDBOX_PATH>\n`
+  if (parsedSandboxPath) {
+    text += `<PARSED_SANDBOX_PATH>${escapeXmlText(parsedSandboxPath)}</PARSED_SANDBOX_PATH>\n`
+  }
+  if (retrieval) {
+    text += '<RETRIEVAL_MODE>session_attachment_rag</RETRIEVAL_MODE>\n'
+    text += `<INDEX_STATUS>${escapeXmlText(retrieval.status)}</INDEX_STATUS>\n`
+    if (retrieval.blockedReason) {
+      text += `<BLOCKED_REASON>${escapeXmlText(retrieval.blockedReason)}</BLOCKED_REASON>\n`
+    }
+    text += [
+      '<SYSTEM_REMINDER>',
+      'This uploaded file is indexed for retrieval and is also available in the sandbox working directory. ',
+      'For document-specific questions about this file, use query_session_attachment and then ',
+      'read_session_attachment_parents before answering. Use code_execution or read_file when direct file processing is needed.',
+      '</SYSTEM_REMINDER>\n',
+    ].join('')
+  } else {
+    text += [
+      '<SYSTEM_REMINDER>',
+      'This uploaded file is available in the sandbox working directory, not inlined in the conversation. ',
+      parsedSandboxPath
+        ? 'Use read_file on PARSED_SANDBOX_PATH for extracted text, or code_execution on SANDBOX_PATH for the original binary. Use those paths exactly — uploads that share a filename live in distinct subdirectories.'
+        : 'Use read_file or code_execution on SANDBOX_PATH to inspect it. Use that path exactly — uploads that share a filename live in distinct subdirectories.',
+      '</SYSTEM_REMINDER>\n',
+    ].join('')
+  }
   text += '</ATTACHMENT_FILE>\n'
   return text
 }

@@ -1,4 +1,5 @@
-import { getSession } from './chatStore'
+import { buildMessageRenderItems } from '@/components/chat/message-render-items'
+import { rendererApplication } from '@/app/renderer-application'
 import { getAllMessageList } from './sessionHelpers'
 import { uiStore } from './uiStore'
 
@@ -9,7 +10,7 @@ export async function scrollToMessage(
   align: 'start' | 'center' | 'end' = 'start',
   behavior: 'auto' | 'smooth' = 'auto' // 'auto' 立即滚动到指定位置，'smooth' 平滑滚动到指定位置
 ): Promise<boolean> {
-  const session = await getSession(sessionId)
+  const session = await rendererApplication.sessionQueryBridge.getSession(sessionId)
   if (!session) {
     return false
   }
@@ -17,11 +18,15 @@ export async function scrollToMessage(
   if (!currentMessages) {
     return false
   }
-  const index = currentMessages.findIndex((msg) => msg.id === msgId)
-  if (index === -1) {
+  // Virtuoso items don't map 1:1 to messages: MessageList groups the latest user turn
+  // with its assistant reply into a single item, so locate the item containing the message.
+  const itemIndex = buildMessageRenderItems(currentMessages).findIndex((item) =>
+    item.messages.some((message) => message.id === msgId)
+  )
+  if (itemIndex === -1) {
     return false
   }
-  scrollToIndex(index, align, behavior)
+  scrollToIndex(itemIndex, align, behavior)
   return true
 }
 

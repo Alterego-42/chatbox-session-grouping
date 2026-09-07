@@ -34,6 +34,22 @@ function createCompactionPoint(
 }
 
 describe('buildContextForAI', () => {
+  it('restores causal order of legacy steered records like the send path', () => {
+    // Legacy steering stored the steered user AFTER the assistant it
+    // interrupted; the send path reorders it in front. The compaction boundary
+    // derives from this list, so the orders must match — otherwise the same
+    // reply can land in both the summary and the raw tail.
+    const messages: Message[] = [
+      createMessage('u1', 'user', 'Q1'),
+      { ...createMessage('a1', 'assistant', 'A1'), finishReason: 'stop' },
+      { ...createMessage('u2', 'user', 'steer'), steered: true },
+    ]
+
+    const result = buildContextForAI({ messages })
+
+    expect(result.map((m) => m.id)).toEqual(['u1', 'u2', 'a1'])
+  })
+
   describe('no compaction points', () => {
     it('should return empty array for empty messages', () => {
       const result = buildContextForAI({ messages: [] })
@@ -54,6 +70,18 @@ describe('buildContextForAI', () => {
       expect(result.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
     })
 
+    it('should exclude fork marker messages', () => {
+      const messages = [
+        createMessage('m1', 'user', 'Hello'),
+        { ...createMessage('fork-marker', 'assistant'), isForkMarker: true },
+        createMessage('m2', 'assistant', 'Hi there'),
+      ]
+
+      const result = buildContextForAI({ messages })
+
+      expect(result.map((m) => m.id)).toEqual(['m1', 'm2'])
+    })
+
     it('should return all messages when compactionPoints is empty array', () => {
       const messages = [createMessage('m1', 'user', 'Hello'), createMessage('m2', 'assistant', 'Hi')]
 
@@ -62,7 +90,7 @@ describe('buildContextForAI', () => {
       expect(result).toHaveLength(2)
     })
 
-    it('should apply tool call cleanup on all messages', () => {
+    it('should keep tool-call parts at full fidelity (cleanup is a send-path concern)', () => {
       const messages: Message[] = [
         createMessage('m1', 'user', 'Search for X'),
         {
@@ -77,10 +105,10 @@ describe('buildContextForAI', () => {
         createMessage('m4', 'assistant', 'Welcome'),
       ]
 
-      const result = buildContextForAI({ messages, keepToolCallRounds: 1 })
+      const result = buildContextForAI({ messages })
 
-      expect(result[1].contentParts).toHaveLength(1)
-      expect(result[1].contentParts[0].type).toBe('text')
+      expect(result[1].contentParts).toHaveLength(2)
+      expect(result[1].contentParts.map((part) => part.type)).toEqual(['text', 'tool-call'])
     })
   })
 
@@ -158,7 +186,7 @@ describe('buildContextForAI', () => {
       expect(result[0].id).toBe('summary-1')
     })
 
-    it('should fall back to all messages when boundary not found', () => {
+    it('should fall back without the orphaned summary when boundary not found', () => {
       const messages = [createMessage('m1', 'user', 'Hello'), createMessage('m2', 'assistant', 'Response')]
       const summary = createSummaryMessage('summary-1')
       const allMessages = [...messages, summary]
@@ -166,11 +194,13 @@ describe('buildContextForAI', () => {
 
       const result = buildContextForAI({ messages: allMessages, compactionPoints })
 
-      expect(result).toHaveLength(3)
-      expect(result.map((m) => m.id)).toEqual(['m1', 'm2', 'summary-1'])
+      // The summary belongs to an inapplicable point (its boundary lives on
+      // another branch); leaking it alongside full history would feed the
+      // model a summary of other content.
+      expect(result.map((m) => m.id)).toEqual(['m1', 'm2'])
     })
 
-    it('should work when summary message is not found', () => {
+    it('should fall back to all messages when summary message is not found', () => {
       const messages = [
         createMessage('m1', 'user', 'Old'),
         createMessage('m2', 'assistant', 'Boundary'),
@@ -181,10 +211,34 @@ describe('buildContextForAI', () => {
 
       const result = buildContextForAI({ messages, compactionPoints })
 
-      expect(result.map((m) => m.id)).toEqual(['m3', 'm4'])
+      // Half a compaction contract must not apply: without the summary standing
+      // in, cutting at the boundary would silently drop history (worst case the
+      // new reply generates with an empty context).
+      expect(result.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4'])
     })
 
-    it('should apply tool call cleanup to context messages', () => {
+    it('should fall back to an older applicable compaction point when the latest is torn apart', () => {
+      const now = Date.now()
+      const messages = [
+        createMessage('m1', 'user', 'Old'),
+        createMessage('m2', 'assistant', 'First boundary'),
+        createSummaryMessage('summary-1', 'First summary'),
+        createMessage('m3', 'user', 'Follow-up'),
+        createMessage('m4', 'assistant', 'Second boundary'),
+        // summary-2 lives on a sibling fork branch: not in this path
+        createMessage('m5', 'user', 'Latest'),
+      ]
+      const compactionPoints = [
+        createCompactionPoint('summary-1', 'm2', now - 1000),
+        createCompactionPoint('summary-2', 'm4', now),
+      ]
+
+      const result = buildContextForAI({ messages, compactionPoints })
+
+      expect(result.map((m) => m.id)).toEqual(['summary-1', 'm3', 'm4', 'm5'])
+    })
+
+    it('should keep tool-call parts of context messages after compaction', () => {
       const messages: Message[] = [
         createMessage('m1', 'user', 'Old search'),
         {
@@ -211,11 +265,11 @@ describe('buildContextForAI', () => {
       const allMessages = [...messages, summary]
       const compactionPoints = [createCompactionPoint('summary-1', 'm2', Date.now())]
 
-      const result = buildContextForAI({ messages: allMessages, compactionPoints, keepToolCallRounds: 1 })
+      const result = buildContextForAI({ messages: allMessages, compactionPoints })
 
       const m4Result = result.find((m) => m.id === 'm4')
-      expect(m4Result?.contentParts).toHaveLength(1)
-      expect(m4Result?.contentParts[0].type).toBe('text')
+      expect(m4Result?.contentParts).toHaveLength(2)
+      expect(m4Result?.contentParts.map((part) => part.type)).toEqual(['text', 'tool-call'])
     })
   })
 
@@ -406,7 +460,7 @@ describe('buildContextForSession', () => {
     expect(result[0].id).toBe('m1')
   })
 
-  it('should respect keepToolCallRounds option', () => {
+  it('should keep tool-call parts untouched', () => {
     const session: Session = {
       id: 'session-1',
       name: 'Test Session',
@@ -422,9 +476,10 @@ describe('buildContextForSession', () => {
       ],
     }
 
-    const result = buildContextForSession(session, { keepToolCallRounds: 0 })
+    const result = buildContextForSession(session)
 
-    expect(result[1].contentParts).toHaveLength(0)
+    expect(result[1].contentParts).toHaveLength(1)
+    expect(result[1].contentParts[0].type).toBe('tool-call')
   })
 })
 
@@ -476,7 +531,7 @@ describe('buildContextForThread', () => {
     expect(result).toEqual([])
   })
 
-  it('should respect options', () => {
+  it('should keep tool-call parts untouched', () => {
     const thread: SessionThread = {
       id: 'thread-1',
       name: 'Thread',
@@ -494,9 +549,10 @@ describe('buildContextForThread', () => {
     }
     const sessionSettings: SessionSettings = { autoCompaction: false }
 
-    const result = buildContextForThread(thread, { keepToolCallRounds: 1, sessionSettings })
+    const result = buildContextForThread(thread, { sessionSettings })
 
-    expect(result[1].contentParts).toHaveLength(0)
+    expect(result[1].contentParts).toHaveLength(1)
+    expect(result[1].contentParts[0].type).toBe('tool-call')
   })
 })
 

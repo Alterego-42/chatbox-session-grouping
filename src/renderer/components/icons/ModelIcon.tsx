@@ -1,6 +1,7 @@
-import { useComputedColorScheme } from '@mantine/core'
-import type { ModelProvider } from '@shared/types'
+import { Image, useComputedColorScheme } from '@mantine/core'
+import { type ModelProvider, ModelProviderEnum } from '@shared/types'
 import { renderModelIcon } from '@/utils/modelLogo'
+import { getProviderIconSrc } from '@/utils/providerIconSrc'
 import ProviderIcon from './ProviderIcon'
 
 interface ModelIconProps {
@@ -43,7 +44,19 @@ export function ModelIcon({ modelId, providerId, size = 16, className }: ModelIc
     )
   }
 
-  // Fallback to ProviderIcon if no model-specific icon
+  // Chatbox AI's own models use the monochrome brand icon rather than the
+  // orange provider image used in settings and other provider-level surfaces.
+  if (providerId === ModelProviderEnum.ChatboxAI && modelId.startsWith('chatboxai-')) {
+    return <ProviderIcon provider={providerId} size={size} className={className} />
+  }
+
+  // Fallback to bundled provider PNG resources if no model-specific icon.
+  const providerIconSrc = providerId ? getProviderIconSrc(providerId) : undefined
+  if (providerIconSrc) {
+    return <Image w={size} h={size} src={providerIconSrc} className={className} alt={`${providerId} image icon`} />
+  }
+
+  // Fallback to ProviderIcon if no provider PNG exists.
   if (providerId) {
     return <ProviderIcon provider={providerId} size={size} className={className} />
   }

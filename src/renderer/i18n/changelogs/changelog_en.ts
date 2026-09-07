@@ -1,4 +1,45 @@
 const changelog = `
+## v1.23.1 - 2026.09.02
+1. In long conversations, you'll be asked to confirm before deleting older messages or switching models if that would reset the cached context
+2. Copilot prompts can now be up to 40,000 characters
+3. Fixed the conversation settings menu sitting under the Android navigation bar
+4. Fixed errors related to keyboard shortcuts, conversation settings, and invalid max output tokens
+
+## v1.23.0 - 2026.09.01
+1. Added persistent memory: new chats can remember key facts you saved, as Global Memory or per Copilot
+2. Added Soul in Work Mode to set the AI's personality and boundaries
+3. You can queue a new message while a reply is generating, or insert one immediately
+4. Working directory and permissions carry over from last time, and can be changed above the input
+5. Full Access no longer pauses for confirmation every 25 steps by default
+6. Vision-capable models can open local images or newly downloaded files on their own
+7. Improved context for long tasks: tool results are not dropped too early, and recent messages are kept first when compacting
+8. You can clear all archived chats at once; text in tool results can be previewed
+9. Added Tencent Hunyuan, Xiaomi MiMo, LongCat, GLM Coding Plan, OpenCode Zen, and OpenCode Go, plus self-hosted SearXNG search
+
+## v1.22.3 - 2026.08.09
+1. Fixed a performance issue that could cause lag when regenerating replies or switching response branches in long conversations
+2. Improved backup export compatibility on devices where backups could fail to export
+
+## v1.22.2 - 2026.08.06
+1. Refined the classic message layout and overall interface, with customizable accent colors and color presets
+2. Organized alternative replies into collapsible branches for easier comparison and clearer conversation context
+3. Improved Work Mode for long-running tasks, approvals, and command compatibility
+4. Added Claude Opus 5 support and improved DeepSeek thinking compatibility
+5. Fixed issues with file parsing, automatic scrolling, Mermaid rendering, and overall stability
+
+## v1.22.1 - 2026.07.28
+1. Added Work Mode: the AI can run code, use tools, work with files on your computer, find past conversations, and generate images to complete complex tasks
+2. Added Skills: install and manage reusable AI abilities, with a regularly updated built-in library
+3. Added complete data backups that include conversations, images, and attachments for export and restore
+4. Redesigned the model picker with search and per-model thinking depth
+5. Added a conversation minimap for navigating long chats
+6. Refreshed onboarding with ready-to-use examples
+7. Added chat archiving and creation time in the sidebar
+8. Added PDF support on mobile
+9. Improved streaming responses, automatic scrolling, and reasoning status display
+10. Updated built-in DeepSeek models and improved compatibility with MCP servers
+11. Various bug fixes and stability improvements
+
 ## v1.21.1 - 2026.06.12
 1. Fixed an issue where the send button could stay disabled after uploading files
 2. Updated the Android app icon

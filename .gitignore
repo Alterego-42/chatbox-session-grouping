@@ -60,6 +60,7 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
+.env.license
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -109,6 +110,7 @@ build-web.sh
 
 # production
 /build
+/.toolchain
 
 # misc
 .DS_Store
@@ -179,7 +181,7 @@ electron-builder.env
 .env.sentry-build-plugin
 
 temp.md
-.sisyphus/
+/output/playwright/
 .playwright-cli/
 node-compile-cache/
 
@@ -189,4 +191,11 @@ storybook-static
 .worktrees/
 .claude/worktrees/
 
-tmp-*.md
+todo.md
+plan.md
+tmp-*.*
+tmp_*.*
+/docs/superpowers/plans
+
+# Local pnpm store accidentally created by pnpm install in worktrees
+.pnpm-store/

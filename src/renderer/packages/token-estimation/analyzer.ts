@@ -5,12 +5,17 @@
  * Returns known token counts and a list of pending computation tasks.
  */
 
+import { estimateMessageToolCallTokens } from '@shared/context/tool-tokens'
 import type { Message, MessageFile, MessageLink } from '@shared/types/session'
-import { getMessageText } from '@shared/utils/message'
 import { MAX_INLINE_FILE_LINES } from '@/packages/context-management/attachment-payload'
 import { getTokenCacheKey, isAttachmentCacheValid, isMessageTextCacheValid } from './cache-keys'
 import { getPriority } from './computation-queue'
-import { estimateTokens } from './tokenizer'
+import {
+  estimateDraftTokensImmediately,
+  getDraftTokenizationText,
+  getTokenizationTextDigest,
+} from './draft-tokenization'
+import { canRetryExactTokenization, getExactTokenizationFallbackCount } from './exact-retry'
 import type { ComputationTask, ContentMode, TokenBreakdown, TokenizerType } from './types'
 
 // ============================================================================
@@ -29,6 +34,14 @@ export interface AnalyzeTokenRequirementsOptions {
   tokenizerType: TokenizerType
   /** Whether the model supports tool use for files (affects preview mode) */
   modelSupportToolUseForFile: boolean
+  /** Whether sandbox mode is active (files sent as metadata only) */
+  sandboxMode?: boolean
+  /**
+   * Latest draft text token count from the caller (exact worker result or
+   * sampled estimate). Without it, long drafts fall back to a sampled
+   * estimate that is reported as settled.
+   */
+  currentInputTextTokens?: number
 }
 
 /**
@@ -49,6 +62,18 @@ export interface AnalysisResult {
 }
 
 /**
+ * Result of analyzing one side (current input or context) independently
+ */
+export interface PartialAnalysisResult {
+  /** Known token counts for this side */
+  breakdown: TokenBreakdown
+  /** Tasks that need computation (without sessionId - caller must add it) */
+  pendingTasks: Omit<ComputationTask, 'id' | 'createdAt' | 'sessionId'>[]
+  /** Whether any counted text token is a persisted sampling fallback rather than an exact encode */
+  hasApproximateText: boolean
+}
+
+/**
  * Result of analyzing a single message's text
  */
 interface MessageTextAnalysisResult {
@@ -56,6 +81,8 @@ interface MessageTextAnalysisResult {
   tokens: number
   /** Whether calculation is needed */
   needsCalculation: boolean
+  /** The counted value is a persisted sampling fallback, not an exact encode */
+  approximate?: boolean
   /** Task to submit (if calculation needed) */
   task?: Omit<ComputationTask, 'id' | 'createdAt' | 'sessionId'>
 }
@@ -86,18 +113,70 @@ interface MessageAttachmentsAnalysisResult {
  * @returns Analysis result with known tokens and pending tasks
  */
 export function analyzeTokenRequirements(options: AnalyzeTokenRequirementsOptions): AnalysisResult {
-  const { constructedMessage, contextMessages, tokenizerType, modelSupportToolUseForFile } = options
+  const {
+    constructedMessage,
+    contextMessages,
+    tokenizerType,
+    modelSupportToolUseForFile,
+    sandboxMode = false,
+    currentInputTextTokens,
+  } = options
+
+  const currentInput = analyzeCurrentInputTokens({
+    constructedMessage,
+    tokenizerType,
+    modelSupportToolUseForFile,
+    sandboxMode,
+    currentInputTextTokens,
+  })
+  const context = analyzeContextTokens({
+    contextMessages,
+    tokenizerType,
+    modelSupportToolUseForFile,
+    sandboxMode,
+  })
+
+  return {
+    currentInputTokens:
+      currentInput.breakdown.text + currentInput.breakdown.attachments + currentInput.breakdown.toolCalls,
+    contextTokens: context.breakdown.text + context.breakdown.attachments + context.breakdown.toolCalls,
+    pendingTasks: [...currentInput.pendingTasks, ...context.pendingTasks],
+    breakdown: {
+      currentInput: currentInput.breakdown,
+      context: context.breakdown,
+    },
+  }
+}
+
+/**
+ * Analyze only the current input message (draft). Kept separate from context
+ * analysis so callers can memoize the two independently. The hook supplies
+ * the latest immediate or worker-computed count without coupling draft work
+ * to context message changes.
+ */
+export function analyzeCurrentInputTokens(options: {
+  constructedMessage: Message | undefined
+  tokenizerType: TokenizerType
+  modelSupportToolUseForFile: boolean
+  sandboxMode?: boolean
+  currentInputTextTokens?: number
+}): PartialAnalysisResult {
+  const {
+    constructedMessage,
+    tokenizerType,
+    modelSupportToolUseForFile,
+    sandboxMode = false,
+    currentInputTextTokens,
+  } = options
 
   const pendingTasks: Omit<ComputationTask, 'id' | 'createdAt' | 'sessionId'>[] = []
-  let currentInputText = 0
-  let currentInputAttachments = 0
-  let contextText = 0
-  let contextAttachments = 0
+  let text = 0
+  let attachments = 0
+  let toolCalls = 0
 
-  // Analyze current input message
   if (constructedMessage) {
-    const textResult = analyzeMessageText(constructedMessage, tokenizerType, true, 0)
-    currentInputText = textResult.tokens
+    const textResult = analyzeMessageText(constructedMessage, tokenizerType, true, 0, currentInputTextTokens)
+    text = textResult.tokens
     if (textResult.needsCalculation && textResult.task) {
       pendingTasks.push(textResult.task)
     }
@@ -107,11 +186,36 @@ export function analyzeTokenRequirements(options: AnalyzeTokenRequirementsOption
       tokenizerType,
       modelSupportToolUseForFile,
       true,
-      0
+      0,
+      sandboxMode
     )
-    currentInputAttachments = attachmentsResult.tokens
+    attachments = attachmentsResult.tokens
     pendingTasks.push(...attachmentsResult.tasks)
+
+    toolCalls = estimateMessageToolCallTokens(constructedMessage)
   }
+
+  // Draft approximation is tracked by the caller's own draft state, not the
+  // persisted marker, which only ever describes stored context messages.
+  return { breakdown: { text, attachments, toolCalls }, pendingTasks, hasApproximateText: false }
+}
+
+/**
+ * Analyze only the context messages (already in conversation).
+ */
+export function analyzeContextTokens(options: {
+  contextMessages: Message[]
+  tokenizerType: TokenizerType
+  modelSupportToolUseForFile: boolean
+  sandboxMode?: boolean
+}): PartialAnalysisResult {
+  const { contextMessages, tokenizerType, modelSupportToolUseForFile, sandboxMode = false } = options
+
+  const pendingTasks: Omit<ComputationTask, 'id' | 'createdAt' | 'sessionId'>[] = []
+  let text = 0
+  let attachments = 0
+  let toolCalls = 0
+  let hasApproximateText = false
 
   // Analyze context messages (reverse order so newest messages have higher priority)
   // contextMessages is ordered oldest to newest, but we want newest first for calculation
@@ -122,7 +226,10 @@ export function analyzeTokenRequirements(options: AnalyzeTokenRequirementsOption
     const priorityIndex = contextLength - 1 - index
 
     const textResult = analyzeMessageText(msg, tokenizerType, false, priorityIndex)
-    contextText += textResult.tokens
+    text += textResult.tokens
+    if (textResult.approximate) {
+      hasApproximateText = true
+    }
     if (textResult.needsCalculation && textResult.task) {
       pendingTasks.push(textResult.task)
     }
@@ -132,21 +239,18 @@ export function analyzeTokenRequirements(options: AnalyzeTokenRequirementsOption
       tokenizerType,
       modelSupportToolUseForFile,
       false,
-      priorityIndex
+      priorityIndex,
+      sandboxMode
     )
-    contextAttachments += attachmentsResult.tokens
+    attachments += attachmentsResult.tokens
     pendingTasks.push(...attachmentsResult.tasks)
+
+    // Tool-call weight is computed synchronously (memoized chars/4): the async
+    // text-token cache never covers tool parts, which dominate agent sessions.
+    toolCalls += estimateMessageToolCallTokens(msg)
   }
 
-  return {
-    currentInputTokens: currentInputText + currentInputAttachments,
-    contextTokens: contextText + contextAttachments,
-    pendingTasks,
-    breakdown: {
-      currentInput: { text: currentInputText, attachments: currentInputAttachments },
-      context: { text: contextText, attachments: contextAttachments },
-    },
-  }
+  return { breakdown: { text, attachments, toolCalls }, pendingTasks, hasApproximateText }
 }
 
 // ============================================================================
@@ -166,14 +270,12 @@ function analyzeMessageText(
   message: Message,
   tokenizerType: TokenizerType,
   isCurrentInput: boolean,
-  messageIndex: number
+  messageIndex: number,
+  currentInputTextTokens?: number
 ): MessageTextAnalysisResult {
-  // For current input (constructedMessage), calculate tokens inline.
-  // This message only exists in React state, not in the store,
-  // so async task execution would fail with "message not found".
   if (isCurrentInput) {
-    const text = getMessageText(message, true, true)
-    const tokens = estimateTokens(text, getTokenModel(tokenizerType))
+    const tokens =
+      currentInputTextTokens ?? estimateDraftTokensImmediately(getDraftTokenizationText(message), tokenizerType)
     return { tokens, needsCalculation: false }
   }
 
@@ -183,9 +285,33 @@ function analyzeMessageText(
   const cacheValid = isMessageTextCacheValid(cachedValue, calculatedAt, message.updatedAt)
 
   if (cacheValid) {
-    return { tokens: cachedValue ?? 0, needsCalculation: false }
+    if (message.tokenCountApproximate?.[tokenizerType] !== true) {
+      return { tokens: cachedValue ?? 0, needsCalculation: false }
+    }
+    // A persisted worker-failure fallback: count it as the best available
+    // value but keep it marked approximate. An exact encode is re-attempted
+    // only while the bounded per-run budget lasts (the next launch retries
+    // afresh), so a broken worker runtime cannot loop the queue forever.
+    const textDigest = getTokenizationTextDigest(getDraftTokenizationText(message))
+    if (!canRetryExactTokenization(message.id, tokenizerType, textDigest)) {
+      return { tokens: cachedValue ?? 0, needsCalculation: false, approximate: true }
+    }
+    return {
+      tokens: cachedValue ?? 0,
+      needsCalculation: true,
+      approximate: true,
+      task: {
+        type: 'message-text',
+        messageId: message.id,
+        tokenizerType,
+        textDigest,
+        retryAttempt: getExactTokenizationFallbackCount(message.id, tokenizerType, textDigest),
+        priority: getPriority(isCurrentInput, 'message-text', messageIndex),
+      },
+    }
   }
 
+  const textDigest = getTokenizationTextDigest(getDraftTokenizationText(message))
   return {
     tokens: 0,
     needsCalculation: true,
@@ -193,16 +319,11 @@ function analyzeMessageText(
       type: 'message-text',
       messageId: message.id,
       tokenizerType,
+      textDigest,
+      retryAttempt: getExactTokenizationFallbackCount(message.id, tokenizerType, textDigest),
       priority: getPriority(isCurrentInput, 'message-text', messageIndex),
     },
   }
-}
-
-function getTokenModel(tokenizerType: TokenizerType): { provider: string; modelId: string } | undefined {
-  if (tokenizerType === 'deepseek') {
-    return { provider: 'deepseek', modelId: 'deepseek-chat' }
-  }
-  return undefined
 }
 
 /**
@@ -215,12 +336,15 @@ function getTokenModel(tokenizerType: TokenizerType): { provider: string; modelI
  * @param messageIndex - Position in context (0 = most recent)
  * @returns Analysis result with tokens and tasks
  */
+import { SANDBOX_METADATA_BASE_TOKENS, SANDBOX_METADATA_PER_ITEM_TOKENS } from '@/packages/token'
+
 function analyzeMessageAttachments(
   message: Message,
   tokenizerType: TokenizerType,
   modelSupportToolUseForFile: boolean,
   isCurrentInput: boolean,
-  messageIndex: number
+  messageIndex: number,
+  sandboxMode: boolean
 ): MessageAttachmentsAnalysisResult {
   let totalTokens = 0
   const tasks: Omit<ComputationTask, 'id' | 'createdAt' | 'sessionId'>[] = []
@@ -230,6 +354,16 @@ function analyzeMessageAttachments(
     ...(message.files || []).map((f) => ({ attachment: f, type: 'file' as const })),
     ...(message.links || []).map((l) => ({ attachment: l, type: 'link' as const })),
   ]
+
+  if (allAttachments.length === 0) {
+    return { tokens: 0, tasks: [] }
+  }
+
+  // In sandbox mode, only metadata XML is sent — use fixed estimate, no computation tasks needed
+  if (sandboxMode) {
+    const metadataTokens = SANDBOX_METADATA_BASE_TOKENS + allAttachments.length * SANDBOX_METADATA_PER_ITEM_TOKENS
+    return { tokens: metadataTokens, tasks: [] }
+  }
 
   for (const { attachment, type } of allAttachments) {
     // Skip attachments without storage key (not yet uploaded/processed)

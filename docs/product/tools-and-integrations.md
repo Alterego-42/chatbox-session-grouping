@@ -1,6 +1,6 @@
 # 工具与集成
 
-> Last updated: 2026-04
+> Last updated: 2026-08
 
 ## 概述
 
@@ -42,7 +42,6 @@ Chatbox 预置了一组云端 MCP 服务（付费功能），无需配置即可�
 | 服务 | 功能 |
 |------|------|
 | Fetch | 抓取网页内容 |
-| Sequential Thinking | 结构化思维推理辅助 |
 | EdgeOne Pages | 将 HTML 部署为公开网页 |
 | arXiv | 学术论文检索 |
 | Context7 | 编程库文档与代码示例检索 |
@@ -56,6 +55,8 @@ Chatbox 预置了一组云端 MCP 服务（付费功能），无需配置即可�
 | 本地进程 (Stdio) | 在电脑上运行 MCP 服务器程序 | 仅桌面端 |
 | HTTP | 通过网络连接远程 MCP 服务器 | 所有平台 |
 
+新添加、从推荐列表安装或通过 JSON 导入的服务器默认使用 **Auto（推荐）** 协议模式，可自动连接新版 MCP，并在服务端支持时兼容旧版协议。升级前已有的服务器继续使用 **Legacy**，避免改变现有连接行为；如自动协商失败，可在编辑服务器时切换到 Legacy。
+
 ## Agent Skills
 
 Agent Skills 是基于 agentskills.io 规范的指令技能系统，适合把高频任务沉淀成可复用能力包（例如翻译、代码审查、写作、数据分析）。
@@ -67,9 +68,32 @@ Agent Skills 是基于 agentskills.io 规范的指令技能系统，适合把高
 
 对话时，模型先获得技能目录元数据，再按需调用 `load_skill` 加载完整技能指令，避免把所有技能全文一次性注入上下文。
 
+### 技能来源
+
+Chatbox 支持多种技能来源：
+
+| 来源 | 说明 |
+|------|------|
+| Chatbox Skills | 通过设置页 Spotlight 搜索安装，或在对话中让 AI 安装 |
+| Claude Code Skills | 自动发现 `~/.claude/skills/` 目录中的技能 |
+
+当两个来源的技能同名时，Chatbox Skills 优先。
+
+### 在对话中安装技能
+
+在 Agent Mode 开启时，AI 可以通过 `install_skill` 工具安装新技能：在沙箱中下载准备技能文件，然后安装到本地。安装后自动启用。
+
+### 命令执行（user_exec）
+
+On 模式下，AI 可在任务需要用户真实环境时通过 `user_exec` 执行命令，不要求先加载 Skill。该工具受分层审批机制保护：安全只读命令可通过本地白名单，符合条件的低风险命令可由 AI 安全评估自动通过，其余命令暂停等待用户确认；Full Access 会跳过逐次审批。
+
 > Skills 当前为桌面端能力，Web/移动端不显示相关入口。
 
 详见 [Agent Skills](./agent-skills.md)。
+
+## 代码执行
+
+在 Chat 模式下，通过 Agent Mode 启用代码执行后，AI 可以在桌面端运行 Node.js 或平台可用的 Shell（Windows 优先 PowerShell，Bash 可选）、处理上传文件、生成可下载文件和 HTML 预览。核心文件工具不依赖 Bash 或 WSL。该能力聚焦简单文件处理和数据计算，不预装 Python 科学计算栈，也不鼓励安装大型依赖包。详见 [Chat 代码执行](./code-execution.md)。
 
 ## 文件读取
 

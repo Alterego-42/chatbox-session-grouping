@@ -1,13 +1,15 @@
-import { type AnthropicProviderOptions, createAnthropic } from '@ai-sdk/anthropic'
+import { createAnthropic } from '@ai-sdk/anthropic'
 import type { LanguageModelV3 } from '@ai-sdk/provider'
 import type { ModelMessage, ToolSet } from 'ai'
 import AbstractAISDKModel, { type CallSettings } from '../../../models/abstract-ai-sdk'
 import { addAnthropicCacheControl } from '../../../models/anthropic-cache'
 import { ApiError } from '../../../models/errors'
 import type { CallChatCompletionOptions, ChatStreamOptions, ModelStreamPart } from '../../../models/types'
+import { createFetchWithProxy } from '../../../models/utils/fetch-proxy'
 import type { ProviderModelInfo, StreamTextResult } from '../../../types'
 import type { ModelDependencies } from '../../../types/adapters'
 import { normalizeClaudeHost } from '../../../utils/llm_utils'
+import { normalizeClaudeReasoningOptions } from '../../../utils/reasoning-control'
 
 interface Options {
   apiKey: string
@@ -17,6 +19,7 @@ interface Options {
   topP?: number
   maxOutputTokens?: number
   stream?: boolean
+  useProxy?: boolean
 }
 
 export default class CustomClaude extends AbstractAISDKModel {
@@ -36,6 +39,7 @@ export default class CustomClaude extends AbstractAISDKModel {
     return createAnthropic({
       baseURL: this.options.apiHost,
       apiKey: this.options.apiKey,
+      fetch: createFetchWithProxy(this.options.useProxy, this.dependencies),
       headers: {
         'anthropic-dangerous-direct-browser-access': 'true',
       },
@@ -49,11 +53,11 @@ export default class CustomClaude extends AbstractAISDKModel {
 
   protected getCallSettings(options: CallChatCompletionOptions): CallSettings {
     const isModelSupportReasoning = this.isSupportReasoning()
-    let providerOptions = {} as { anthropic: AnthropicProviderOptions }
+    let providerOptions: CallSettings['providerOptions'] = {}
     if (isModelSupportReasoning) {
       providerOptions = {
         anthropic: {
-          ...(options.providerOptions?.claude || {}),
+          ...(normalizeClaudeReasoningOptions(this.options.model.modelId, options.providerOptions?.claude) || {}),
         },
       }
     }
@@ -91,6 +95,7 @@ export default class CustomClaude extends AbstractAISDKModel {
     const res = await this.dependencies.request.apiRequest({
       url: url,
       method: 'GET',
+      useProxy: this.options.useProxy,
       headers: {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',

@@ -13,12 +13,18 @@ let POOL = [
 
 export function isChatboxAPI(input: RequestInfo | URL) {
   const url = typeof input === 'string' ? input : ((input as Request).url ?? input.toString())
-  return POOL.some((o) => url.startsWith(o)) || url.startsWith(API_ORIGIN)
+  return POOL.some((o) => url.startsWith(o)) || url.startsWith(getChatboxAPIOrigin())
 }
 
 export function getChatboxAPIOrigin() {
   if (process.env.USE_LOCAL_API) {
     return 'http://localhost:8002'
+  }
+  if (process.env.USE_BETA_API) {
+    return 'https://api-beta.chatboxai.app'
+  }
+  if (process.env.USE_NEWDB_API) {
+    return 'https://beta-new-db.chatboxai.app'
   }
   return API_ORIGIN
 }
@@ -40,7 +46,8 @@ export async function testApiOrigins() {
           const controller = new AbortController()
           setTimeout(() => controller.abort(), 2000) // 2秒超时
           const res = await ofetch<{ data: { api_origins: string[] } }>(`${origin}/api/api_origins`, {
-            signal: controller.signal,
+            // ofetch and React Native expose compatible signals through different declarations.
+            signal: controller.signal as unknown as NonNullable<Parameters<typeof ofetch>[1]>['signal'],
             retry: 1,
           })
           // 如果服务器返回了新的 API 域名，则更新缓存

@@ -1,4 +1,4 @@
-import { ActionIcon, Flex, Image, Paper, Skeleton, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Flex, Image, Paper, Skeleton, Text } from '@mantine/core'
 import { IconDownload, IconMaximize, IconMessageReport, IconPhoto, IconPhotoOff } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import type PhotoSwipe from 'photoswipe'
@@ -6,11 +6,18 @@ import type { UIElementData } from 'photoswipe'
 import { memo, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Gallery, Item as GalleryItem } from 'react-photoswipe-gallery'
+import { AppTooltip as Tooltip } from '@/components/ui/tooltip'
 import { useFetchBlob } from '@/hooks/useBlob'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
 import platform from '@/platform'
 
-import { blobToDataUrl, getBase64ImageSize, getImageSizeFromUrl } from './constants'
+import {
+  blobToDataUrl,
+  getBase64ImageSize,
+  getImageSizeFromUrl,
+  isDirectImageSource,
+  isHttpImageSource,
+} from './constants'
 
 export interface GeneratedImagesGalleryProps {
   images: string[] // CDN URLs or local storage keys
@@ -47,7 +54,7 @@ export const GeneratedImagesGallery = memo(function GeneratedImagesGallery({
         if (!keyOrUrl) return
 
         // If it's a URL, download it directly
-        if (keyOrUrl.startsWith('http://') || keyOrUrl.startsWith('https://')) {
+        if (isHttpImageSource(keyOrUrl)) {
           const filename = `image_${Date.now()}.png`
           platform.exporter.exportByUrl(filename, keyOrUrl)
           return
@@ -126,7 +133,7 @@ function GeneratedImageGalleryItem({
 }: GeneratedImageGalleryItemProps) {
   const { t } = useTranslation()
   const [hovered, setHovered] = useState(false)
-  const isUrl = keyOrUrl.startsWith('http://') || keyOrUrl.startsWith('https://')
+  const isDirectSource = isDirectImageSource(keyOrUrl)
   const fetchBlob = useFetchBlob()
 
   const {
@@ -136,11 +143,17 @@ function GeneratedImageGalleryItem({
   } = useQuery({
     queryKey: ['generated-image-gallery', keyOrUrl],
     queryFn: async () => {
-      if (isUrl) {
+      if (isDirectSource) {
         // For URLs, we need to load the image to get dimensions
         const size = await getImageSizeFromUrl(keyOrUrl)
         const displaySize = calculateDisplaySize(size.width, size.height)
-        return { data: keyOrUrl, ...size, ...displaySize, isUrl: true }
+        return {
+          data: keyOrUrl,
+          ...size,
+          ...displaySize,
+          isDirectSource: true,
+          isHttpSource: isHttpImageSource(keyOrUrl),
+        }
       }
       // For storage keys, read from local storage
       const blob = await fetchBlob(keyOrUrl)
@@ -148,7 +161,7 @@ function GeneratedImageGalleryItem({
       const base64 = blobToDataUrl(blob)
       const size = await getBase64ImageSize(base64)
       const displaySize = calculateDisplaySize(size.width, size.height)
-      return { data: base64, ...size, ...displaySize, isUrl: false }
+      return { data: base64, ...size, ...displaySize, isDirectSource: false, isHttpSource: false }
     },
     staleTime: Infinity,
     gcTime: 60 * 1000,
@@ -165,7 +178,7 @@ function GeneratedImageGalleryItem({
       e.stopPropagation()
       if (!imageData) return
       const filename = `image_${Date.now()}`
-      if (imageData.isUrl) {
+      if (imageData.isHttpSource) {
         void platform.exporter.exportByUrl(`${filename}.png`, imageData.data)
       } else {
         void platform.exporter.exportImageFile(filename, imageData.data)
@@ -248,14 +261,14 @@ function GeneratedImageGalleryItem({
             }}
           />
 
-          {onReport && isSmallScreen && (
+          {onReport && (
             <Tooltip label={t('report')} withArrow disabled={isSmallScreen}>
               <ActionIcon
                 aria-label={t('report')}
                 color="red"
                 variant="white"
                 size="sm"
-                radius="xl"
+                radius="lg"
                 onClick={handleReport}
                 className="absolute right-3 bottom-3 z-[1] !bg-white/70 !text-red-500 shadow-sm opacity-65 transition-opacity hover:opacity-100 pointer-events-auto"
               >
@@ -277,7 +290,7 @@ function GeneratedImageGalleryItem({
               <ActionIcon
                 variant="white"
                 size="lg"
-                radius="xl"
+                radius="lg"
                 onClick={open}
                 className="shadow-lg hover:scale-105 transition-transform pointer-events-auto"
               >
@@ -289,7 +302,7 @@ function GeneratedImageGalleryItem({
               <ActionIcon
                 variant="white"
                 size="lg"
-                radius="xl"
+                radius="lg"
                 onClick={handleUseRef}
                 className="shadow-lg hover:scale-105 transition-transform pointer-events-auto"
               >
@@ -301,7 +314,7 @@ function GeneratedImageGalleryItem({
               <ActionIcon
                 variant="white"
                 size="lg"
-                radius="xl"
+                radius="lg"
                 onClick={handleDownload}
                 className="shadow-lg hover:scale-105 transition-transform pointer-events-auto"
               >

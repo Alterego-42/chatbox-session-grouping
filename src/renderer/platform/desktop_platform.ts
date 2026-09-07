@@ -1,7 +1,15 @@
 /** biome-ignore-all lint/suspicious/noExplicitAny: <any> */
 
+import type { AnalyticsEventParams } from '@shared/analytics'
 import type { ElectronIPC } from '@shared/electron-types'
+import type {
+  SandboxExecLanguage,
+  SandboxExecResult,
+  SandboxOperationResult,
+  SandboxReadResult,
+} from '@shared/sandbox-provider'
 import type { Config, Settings, ShortcutSetting } from '@shared/types'
+import type { WorkspaceInstructionsResult } from '@shared/types/workspace-instructions'
 import { cache } from '@shared/utils/cache'
 import localforage from 'localforage'
 import { v4 as uuidv4 } from 'uuid'
@@ -9,7 +17,6 @@ import { parseLocale } from '@/i18n/parser'
 import { getLogger } from '@/lib/utils'
 import { type ImageGenerationStorage, IndexedDBImageGenerationStorage } from '@/storage/ImageGenerationStorage'
 import { IndexedDBSessionMetaStorage, type SessionMetaStorage } from '@/storage/SessionMetaStorage'
-import { IndexedDBTaskSessionStorage, type TaskSessionStorage } from '@/storage/TaskSessionStorage'
 import { rememberFileNativePath } from '@/utils/file-native-path'
 import { getOS } from '../packages/navigator'
 import type { Platform, PlatformType } from './interfaces'
@@ -24,13 +31,13 @@ const store = localforage.createInstance({ name: 'chatboxstore' })
 
 export default class DesktopPlatform implements Platform {
   public type: PlatformType = 'desktop'
+  public readonly isDesktopLike = true
 
   public exporter = new WebExporter()
 
   private _kbController?: DesktopKnowledgeBaseController
   private _sessionAttachmentRagController?: DesktopSessionAttachmentRagController
   private _imageGenerationStorage: ImageGenerationStorage | null = null
-  private _taskSessionStorage: TaskSessionStorage | null = null
   private _sessionMetaStorage: SessionMetaStorage | null = null
 
   public ipc: ElectronIPC
@@ -62,6 +69,9 @@ export default class DesktopPlatform implements Platform {
   }
   public onWindowFocused(callback: () => void): () => void {
     return this.ipc.onWindowFocused(callback)
+  }
+  public async isWindowFocused(): Promise<boolean> {
+    return this.ipc.invoke('window:is-focused')
   }
   public onUpdateDownloaded(callback: () => void): () => void {
     return this.ipc.onUpdateDownloaded(callback)
@@ -206,13 +216,19 @@ export default class DesktopPlatform implements Platform {
   }
 
   public initTracking(): void {
-    setTimeout(() => {
-      this.trackingEvent('user_engagement', {})
-    }, 4000) // 怀疑应用初始化后需要一段时间才能正常工作
+    // Desktop events are sent through the main-process Measurement Protocol bridge.
   }
-  public trackingEvent(name: string, params: { [key: string]: string }) {
-    const dataJson = JSON.stringify({ name, params })
-    this.ipc.invoke('analysticTrackingEvent', dataJson)
+  public async trackingEvent(name: string, params: AnalyticsEventParams): Promise<void> {
+    const chatboxPlatform = await this.getPlatform()
+    const dataJson = JSON.stringify({
+      name,
+      params: {
+        ...params,
+        chatbox_platform_type: 'desktop',
+        chatbox_platform: chatboxPlatform,
+      },
+    })
+    await this.ipc.invoke('analysticTrackingEvent', dataJson)
   }
 
   public async shouldShowAboutDialogWhenStartUp(): Promise<boolean> {
@@ -237,8 +253,8 @@ export default class DesktopPlatform implements Platform {
     return this.ipc.invoke('ensureAutoLaunch', enable)
   }
 
-  async parseFileLocally(file: File): Promise<{ key?: string; isSupported: boolean }> {
-    let result: { text: string; isSupported: boolean }
+  async parseFileLocally(file: File): Promise<{ key?: string; isSupported: boolean; errorCode?: string }> {
+    let result: { text: string; isSupported: boolean; errorCode?: string }
     const filePath = this.getLocalFilePath(file)
     if (!filePath) {
       // 复制长文本粘贴的文件是没有 path 的
@@ -248,8 +264,10 @@ export default class DesktopPlatform implements Platform {
       result = JSON.parse(resultJSON)
     }
     if (!result.isSupported) {
-      log.error(`parseFileLocally: unsupported file "${file.name}" (path=${filePath || 'none'})`)
-      return { isSupported: false }
+      log.error(
+        `parseFileLocally: unsupported file "${file.name}" (path=${filePath || 'none'}, errorCode=${result.errorCode || 'none'})`
+      )
+      return { isSupported: false, errorCode: result.errorCode }
     }
     const key = `parseFile-` + uuidv4()
     await this.setStoreBlob(key, result.text)
@@ -267,6 +285,39 @@ export default class DesktopPlatform implements Platform {
       return null
     }
     return result.text || null
+  }
+
+  async fsRead(params: { filePath: string; offset?: number; limit?: number }) {
+    return this.ipc.invoke('fs:read', params)
+  }
+
+  async fsReadImage(params: { filePath: string }): Promise<{ success: boolean; bytes?: ArrayBuffer; error?: string }> {
+    return this.ipc.invoke('fs:read-image', params)
+  }
+
+  async readWorkspaceInstructions(directories: string[]): Promise<WorkspaceInstructionsResult> {
+    return this.ipc.invoke('workspace:read-instructions', directories)
+  }
+
+  async fsList(params: { dirPath: string }) {
+    return this.ipc.invoke('fs:list', params)
+  }
+
+  async fsSearch(params: { pattern: string; dirPath: string; regex?: boolean; include?: string }) {
+    return this.ipc.invoke('fs:search', params)
+  }
+
+  async fsWrite(params: { filePath: string; content: string }) {
+    return this.ipc.invoke('fs:write', params)
+  }
+
+  async fsEdit(params: {
+    filePath: string
+    search?: string
+    replace?: string
+    edits?: Array<{ search: string; replace: string }>
+  }) {
+    return this.ipc.invoke('fs:edit', params)
   }
 
   async parseFileWithMineru(
@@ -333,13 +384,6 @@ export default class DesktopPlatform implements Platform {
     return this._imageGenerationStorage
   }
 
-  public getTaskSessionStorage(): TaskSessionStorage {
-    if (!this._taskSessionStorage) {
-      this._taskSessionStorage = new IndexedDBTaskSessionStorage()
-    }
-    return this._taskSessionStorage
-  }
-
   public getSessionMetaStorage(): SessionMetaStorage {
     if (!this._sessionMetaStorage) {
       this._sessionMetaStorage = new IndexedDBSessionMetaStorage()
@@ -347,56 +391,154 @@ export default class DesktopPlatform implements Platform {
     return this._sessionMetaStorage
   }
 
-  public async sandboxInit(config: { workingDirectory: string }) {
-    return this.ipc.invoke('sandbox:init', config)
+  public async sandboxExecCode(params: {
+    code: string
+    language: SandboxExecLanguage
+    timeout?: number
+    sessionId?: string
+    toolCallId?: string
+  }): Promise<SandboxExecResult> {
+    return this.ipc.invoke('sandbox:exec-code', params)
   }
 
-  public async sandboxExec(params: { command: string; timeout?: number }) {
-    return this.ipc.invoke('sandbox:exec', params)
+  public async sandboxRunCommand(params: {
+    command: string
+    shell: 'bash' | 'powershell'
+    workdir?: string
+    timeout?: number
+    sessionId?: string
+    toolCallId: string
+  }): Promise<import('@shared/sandbox-provider').SandboxRunCommandResult> {
+    return this.ipc.invoke('sandbox:run-command', params)
   }
 
-  public async sandboxRead(params: { filePath: string }) {
+  public async sandboxRead(params: {
+    filePath: string
+    offset?: number
+    limit?: number
+    sessionId?: string
+  }): Promise<SandboxReadResult> {
     return this.ipc.invoke('sandbox:read', params)
   }
 
-  public async sandboxWrite(params: { filePath: string; content: string }) {
+  public async sandboxWrite(params: { filePath: string; content: string; sessionId?: string }) {
     return this.ipc.invoke('sandbox:write', params)
   }
 
-  public async sandboxEdit(params: { filePath: string; search: string; replace: string }) {
+  public async sandboxEdit(params: {
+    filePath: string
+    search?: string
+    replace?: string
+    edits?: Array<{ search: string; replace: string }>
+    sessionId?: string
+  }) {
     return this.ipc.invoke('sandbox:edit', params)
   }
 
-  public async sandboxLs(params: { dirPath: string }) {
+  public async sandboxLs(params: { dirPath: string; sessionId?: string }): Promise<SandboxOperationResult> {
     return this.ipc.invoke('sandbox:ls', params)
   }
 
-  public async sandboxGrep(params: { pattern: string; dirPath?: string; include?: string }) {
-    return this.ipc.invoke('sandbox:grep', params)
+  public async sandboxSearch(params: {
+    pattern: string
+    path: string
+    regex?: boolean
+    include?: string
+    sessionId?: string
+  }): Promise<SandboxOperationResult> {
+    return this.ipc.invoke('sandbox:search', {
+      ...params,
+      dirPath: params.path,
+    })
   }
 
-  public async sandboxFind(params: { dirPath: string; pattern?: string }) {
+  public async sandboxFind(params: {
+    dirPath: string
+    pattern?: string
+    sessionId?: string
+  }): Promise<SandboxOperationResult> {
     return this.ipc.invoke('sandbox:find', params)
   }
 
-  public async sandboxKill() {
-    return this.ipc.invoke('sandbox:kill')
+  public async sandboxKill(params?: { sessionId?: string; toolCallId?: string }) {
+    return this.ipc.invoke('sandbox:kill', params)
   }
 
-  public async sandboxReset() {
-    return this.ipc.invoke('sandbox:reset')
+  public async sandboxReset(params?: { sessionId?: string }) {
+    return this.ipc.invoke('sandbox:reset', params)
   }
 
-  public async sandboxStatus() {
-    return this.ipc.invoke('sandbox:status')
+  public async sandboxStatus(params?: { sessionId?: string }) {
+    return this.ipc.invoke('sandbox:status', params)
+  }
+
+  public async sandboxResolveWorkingDir(params: { sessionId: string }) {
+    return this.ipc.invoke('sandbox:resolve-working-dir', params)
   }
 
   public async sandboxCheckAvailability() {
     return this.ipc.invoke('sandbox:check-availability')
   }
 
+  public async sandboxInitTemp(params: { sessionId: string; workingDirectories?: string[] }) {
+    return this.ipc.invoke('sandbox:init-temp', params)
+  }
+
+  public async sandboxCopyFile(params: { content: string; targetFilename: string; sessionId?: string }) {
+    return this.ipc.invoke('sandbox:copy-file', params)
+  }
+
+  public async sandboxCopyBlob(params: { blobKey: string; targetFilename: string; sessionId?: string }) {
+    return this.ipc.invoke('sandbox:copy-blob', params)
+  }
+
+  public async sandboxSeedBlobs(params: {
+    items: Array<{ blobKey: string; targetFilename: string }>
+    sessionId?: string
+  }) {
+    return this.ipc.invoke('sandbox:seed-blobs', params)
+  }
+
+  public async sandboxExportFile(params: { sandboxPath: string; suggestedName?: string }) {
+    return this.ipc.invoke('sandbox:export-file', params)
+  }
+
+  public async sandboxPersistArtifact(params: { sandboxPath: string; sessionId: string; displayName?: string }) {
+    return this.ipc.invoke('sandbox:persist-artifact', params)
+  }
+
+  public async sandboxHasArtifacts(params: { sessionId: string }) {
+    return this.ipc.invoke('sandbox:has-artifacts', params)
+  }
+
+  public async sandboxRemoveArtifacts(params: { sessionId: string }) {
+    return this.ipc.invoke('sandbox:remove-artifacts', params)
+  }
+
+  public async sandboxReadFileBase64(params: {
+    filePath: string
+    maxBytes?: number
+  }): Promise<{ success: boolean; base64?: string; error?: string }> {
+    return this.ipc.invoke('sandbox:read-file-base64', params)
+  }
+
+  public async sandboxReadFileBytes(params: {
+    filePath: string
+    maxBytes?: number
+  }): Promise<{ success: boolean; bytes?: ArrayBuffer; error?: string }> {
+    return this.ipc.invoke('sandbox:read-file-bytes', params)
+  }
+
+  public async sandboxCreateHtmlPreview(params: { filePath: string }) {
+    return this.ipc.invoke('sandbox:create-html-preview', params)
+  }
+
   public async openDirectoryDialog() {
     return this.ipc.invoke('dialog:openDirectory')
+  }
+
+  public async scanLocalAgentMemories() {
+    return this.ipc.invoke('agent-persona:scan-local-memories')
   }
 
   public minimize() {

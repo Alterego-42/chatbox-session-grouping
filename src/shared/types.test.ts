@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { copyMessageForksWithMapping, copyMessagesWithMapping, copyThreads, createMessage } from './types'
+import {
+  copyMessageForksWithMapping,
+  copyMessagesWithMapping,
+  copyThreads,
+  createMessage,
+  MessageSchema,
+} from './types'
 import type { CompactionPoint, SessionThread } from './types/session'
 
 describe('copyMessagesWithMapping', () => {
@@ -37,20 +43,25 @@ describe('copyMessagesWithMapping', () => {
     expect(idMapping.size).toBe(0)
   })
 
-  it('should clear cancel function on copied messages', () => {
-    const msg = createMessage('user', 'Test')
-    msg.cancel = () => {}
-    const { messages: newMessages } = copyMessagesWithMapping([msg])
-
-    expect(newMessages[0].cancel).toBeUndefined()
-  })
-
   it('should preserve timestamp on copied messages', () => {
     const msg = createMessage('user', 'Test')
     const originalTimestamp = msg.timestamp
     const { messages: newMessages } = copyMessagesWithMapping([msg])
 
     expect(newMessages[0].timestamp).toBe(originalTimestamp)
+  })
+})
+
+describe('MessageSchema', () => {
+  it('drops the removed legacy cancel projection', () => {
+    const parsed = MessageSchema.parse({
+      id: 'legacy-message',
+      role: 'assistant',
+      contentParts: [],
+      cancel: () => undefined,
+    })
+
+    expect('cancel' in parsed).toBe(false)
   })
 })
 
@@ -140,7 +151,8 @@ describe('copyThreads with compactionPoints', () => {
     }
 
     const newThreads = copyThreads([thread])!
-    expect(newThreads[0].compactionPoints).toHaveLength(0)
+    // All ids unmapped → the point is dropped entirely (undefined, not []).
+    expect(newThreads[0].compactionPoints).toBeUndefined()
   })
 
   it('should handle mixed valid and invalid compactionPoints', () => {
@@ -349,7 +361,7 @@ describe('copyMessageForksWithMapping', () => {
     const unrelated = createMessage('user', 'unrelated')
 
     const { messages: copiedMessages, idMapping } = copyMessagesWithMapping([pivot, current])
-    const copiedForks = copyMessageForksWithMapping(
+    const { messageForksHash: copiedForks, idMapping: fullIdMapping } = copyMessageForksWithMapping(
       {
         [pivot.id]: {
           position: 0,
@@ -390,10 +402,14 @@ describe('copyMessageForksWithMapping', () => {
     expect(copiedNestedFork).toBeDefined()
     expect(copiedNestedFork?.lists[1].messages[0].id).not.toBe(nestedAlternative.id)
     expect(copiedForks?.[unrelated.id]).toBeUndefined()
+    // The returned mapping covers messages copied inside fork lists, so
+    // compaction points anchored in inactive branches can be remapped.
+    expect(fullIdMapping.get(branchTail.id)).toBe(copiedPivotFork?.lists[1].messages[1].id)
+    expect(fullIdMapping.get(nestedAlternative.id)).toBe(copiedNestedFork?.lists[1].messages[0].id)
   })
 
   it('should return undefined when no fork ids can be mapped', () => {
-    const result = copyMessageForksWithMapping(
+    const { messageForksHash: result } = copyMessageForksWithMapping(
       {
         original: {
           position: 0,
@@ -412,7 +428,7 @@ describe('copyMessageForksWithMapping', () => {
     const alreadyMapped = createMessage('assistant', 'already mapped')
     const mappedChildId = 'mapped-child-id'
 
-    const copiedForks = copyMessageForksWithMapping(
+    const { messageForksHash: copiedForks } = copyMessageForksWithMapping(
       {
         [pivot.id]: {
           position: 0,

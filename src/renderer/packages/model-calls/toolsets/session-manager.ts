@@ -1,12 +1,12 @@
 import { type ToolSet, tool } from 'ai'
 import z from 'zod'
+import { rendererApplication } from '@/app/renderer-application'
 import { type AttemptResult, concurrencyLadder, runWithConcurrencyFallback } from '@/lib/concurrency'
-import * as chatStore from '@/stores/chatStore'
 import * as groupStore from '@/stores/groupStore'
 import { applyProposal, noOpStrategy, type OrganizeProposal } from '@/stores/session/auto-organize'
-import { duplicateGroup } from '@/stores/session/groups'
+import { _copySession, deleteSession } from '@/stores/session/crud'
+import { duplicateGroup, moveSessionToGroup, reorderGroups } from '@/stores/session/groups'
 import { generateSessionSummary, getSessionSummary } from '@/stores/session/summary'
-import { _copySession, moveSessionToGroup, reorderGroups } from '@/stores/sessionActions'
 import { settingsStore } from '@/stores/settingsStore'
 import { getMessageText } from '../../../../shared/utils/message'
 
@@ -33,7 +33,7 @@ const declined = { skipped: true as const, reason: 'user_declined' as const }
 // Read the COMPLETE session set straight from storage (getAll), never the paginated
 // React-Query cache — the manager must see every session, not just the loaded pages.
 async function loadVisibleSessions() {
-  const list = await chatStore.listAllSessionsMeta()
+  const list = await rendererApplication.sessions.listAllSessionsMeta()
   return list.filter((s) => !s.system)
 }
 
@@ -42,7 +42,7 @@ type SummaryPayload = { summary: string; cached: boolean; stale: false; generate
 // Read a cached summary (when fresh) or generate one. Resolves (never throws) to an AttemptResult
 // so the concurrency-fallback runner can retry only the failed sessions at a lower concurrency.
 async function summarizeSession(sessionId: string, forceRegenerate?: boolean): Promise<AttemptResult<SummaryPayload>> {
-  const session = await chatStore.getSession(sessionId)
+  const session = await rendererApplication.sessions.getSession(sessionId)
   if (!session) return { ok: false, error: 'session not found' }
   try {
     const read = await getSessionSummary(sessionId)
@@ -135,7 +135,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       insertIndex: z.number().int().min(0).optional(),
     }),
     execute: async (input: { sessionId: string; targetGroupId: string | null; insertIndex?: number }) => {
-      const session = await chatStore.getSession(input.sessionId)
+      const session = await rendererApplication.sessions.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
       await moveSessionToGroup(input.sessionId, input.targetGroupId, input.insertIndex)
       return { ok: true }
@@ -146,12 +146,9 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
     description: 'Rename a session.',
     inputSchema: z.object({ sessionId: z.string(), newName: z.string().min(1) }),
     execute: async (input: { sessionId: string; newName: string }) => {
-      const session = await chatStore.getSession(input.sessionId)
+      const session = await rendererApplication.sessions.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
-      await chatStore.updateSession(input.sessionId, (s) => {
-        if (!s) throw new Error('session not found')
-        return { ...s, name: input.newName }
-      })
+      await rendererApplication.sessions.updateSession(input.sessionId, { name: input.newName })
       return { ok: true }
     },
   })
@@ -160,9 +157,9 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
     description: 'Duplicate a session (messages copied). Returns the new session id.',
     inputSchema: z.object({ sessionId: z.string() }),
     execute: async (input: { sessionId: string }) => {
-      const session = await chatStore.getSession(input.sessionId)
+      const session = await rendererApplication.sessions.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
-      const sessions = await chatStore.listAllSessionsMeta()
+      const sessions = await rendererApplication.sessions.listAllSessionsMeta()
       const meta = sessions.find((s) => s.id === input.sessionId)
       if (!meta) return { ok: false, error: 'session not found' }
       const created = await _copySession(meta)
@@ -274,7 +271,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       const failed: Array<{ sessionId: string; error: string }> = []
       for (const id of input.sessionIds) {
         try {
-          const session = await chatStore.getSession(id)
+          const session = await rendererApplication.sessions.getSession(id)
           if (!session) {
             failed.push({ sessionId: id, error: 'session not found' })
             continue
@@ -293,14 +290,14 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
     description: 'Permanently delete a session. Requires user confirmation.',
     inputSchema: z.object({ sessionId: z.string() }),
     execute: async (input: { sessionId: string }) => {
-      const session = await chatStore.getSession(input.sessionId)
+      const session = await rendererApplication.sessions.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
       const ok = await confirmDangerous({
         type: 'delete_session',
         description: `Delete session "${session.name}"? This cannot be undone.`,
       })
       if (!ok) return declined
-      await chatStore.deleteSession(input.sessionId)
+      await deleteSession(input.sessionId)
       return { ok: true }
     },
   })
@@ -332,15 +329,12 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       const failed: Array<{ sessionId: string; error: string }> = []
       for (const item of input.items) {
         try {
-          const session = await chatStore.getSession(item.sessionId)
+          const session = await rendererApplication.sessions.getSession(item.sessionId)
           if (!session) {
             failed.push({ sessionId: item.sessionId, error: 'session not found' })
             continue
           }
-          await chatStore.updateSession(item.sessionId, (s) => {
-            if (!s) throw new Error('session not found')
-            return { ...s, name: item.newName }
-          })
+          await rendererApplication.sessions.updateSession(item.sessionId, { name: item.newName })
           ok.push(item.sessionId)
         } catch (err) {
           failed.push({ sessionId: item.sessionId, error: err instanceof Error ? err.message : String(err) })
@@ -374,7 +368,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       const failed: Array<{ sessionId: string; error: string }> = []
       for (const s of targets) {
         try {
-          await chatStore.deleteSession(s.id)
+          await deleteSession(s.id)
           deleted.push(s.id)
         } catch (err) {
           failed.push({ sessionId: s.id, error: err instanceof Error ? err.message : String(err) })
@@ -521,7 +515,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       forceRegenerate: z.boolean().optional().describe('Regenerate even if a fresh cached summary exists.'),
     }),
     execute: async (input: { sessionId: string; forceRegenerate?: boolean }) => {
-      const session = await chatStore.getSession(input.sessionId)
+      const session = await rendererApplication.sessions.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
       try {
         const read = await getSessionSummary(input.sessionId)
@@ -559,7 +553,7 @@ export function buildSessionManagerToolset(opts: { confirmDangerous: ConfirmDang
       perMessageCharLimit: z.number().int().min(50).max(4000).optional(),
     }),
     execute: async (input: { sessionId: string; limit?: number; perMessageCharLimit?: number }) => {
-      const session = await chatStore.getSession(input.sessionId)
+      const session = await rendererApplication.sessions.getSession(input.sessionId)
       if (!session) return { ok: false, error: 'session not found' }
       const limit = input.limit ?? 5
       const charLimit = input.perMessageCharLimit ?? 800

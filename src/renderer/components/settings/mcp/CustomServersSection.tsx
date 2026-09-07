@@ -5,6 +5,7 @@ import { type FC, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { v4 as uuid } from 'uuid'
+import { bucketPlausibleCount } from '@/analytics/plausible'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
 import { useToggleMCPServer } from '@/hooks/mcp'
 import { mcpController } from '@/packages/mcp/controller'
@@ -25,7 +26,7 @@ const ServerCard: FC<{
   const { t } = useTranslation()
   const { config, triggerEdit, onEnabledChange } = props
   return (
-    <Paper shadow="xs" radius="md" withBorder p="sm">
+    <Paper shadow="xs" radius="lg" withBorder p="sm">
       <Flex justify="space-between" align="center">
         <Text size="sm" fw={600}>
           {config.name}
@@ -100,6 +101,7 @@ const CustomServersSection: FC<Props> = (props) => {
           id: uuid(),
           name: entry.title,
           enabled: true,
+          protocolMode: 'auto',
           transport: {
             type: 'stdio',
             command: entry.configuration.command,
@@ -115,6 +117,7 @@ const CustomServersSection: FC<Props> = (props) => {
           id: uuid(),
           name: '',
           enabled: true,
+          protocolMode: 'auto',
           transport: { type: 'http', url: '' },
         },
       })
@@ -124,7 +127,7 @@ const CustomServersSection: FC<Props> = (props) => {
   const triggerImportJson = async () => {
     const content = await navigator.clipboard.readText()
     const servers = parseServersFromJson(content)
-    trackEvent('import_mcp_servers_from_json', { count: servers.length })
+    trackEvent('import_mcp_servers_from_json', { count: bucketPlausibleCount(servers.length) })
     if (!servers.length) {
       toastError(t('No MCP servers parsed from clipboard'))
       return
@@ -146,7 +149,7 @@ const CustomServersSection: FC<Props> = (props) => {
         <Paper
           tabIndex={-1}
           shadow="xs"
-          radius="md"
+          radius="lg"
           withBorder
           bd="1px dashed var(--chatbox-border-primary)"
           p="sm"

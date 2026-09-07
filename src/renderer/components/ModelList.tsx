@@ -1,4 +1,5 @@
-import { Badge, Button, Flex, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import { Badge, Button, Flex, Stack, Text, TextInput } from '@mantine/core'
+import { AutomationAdjacentAttr, TestId } from '@shared/automation/testids'
 import type { ProviderModelInfo } from '@shared/types'
 import { formatNumber } from '@shared/utils'
 import {
@@ -15,6 +16,7 @@ import {
 import { capitalize } from 'lodash'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AppTooltip as Tooltip } from '@/components/ui/tooltip'
 import { ScalableIcon } from './common/ScalableIcon'
 
 interface ModelListProps {
@@ -71,14 +73,17 @@ export function ModelList({
       )}
 
       <Stack
+        data-testid={TestId.settings.providerModelList}
         gap={0}
         px="xxs"
-        className={`border-solid border rounded-sm min-h-[100px] max-h-[80vh] overflow-y-auto border-chatbox-border-primary`}
+        className={`border-solid border rounded-lg min-h-[60px] overflow-y-auto border-chatbox-border-primary`}
       >
         {filteredModels.length > 0 ? (
           filteredModels.map((model) => (
             <Flex
               key={model.modelId}
+              data-testid={TestId.settings.providerModelItem}
+              {...{ [AutomationAdjacentAttr.modelId]: model.modelId }}
               gap="xs"
               align="center"
               py="sm"
@@ -119,21 +124,21 @@ export function ModelList({
                     {model.type && model.type !== 'chat' && <Badge color="blue">{t(capitalize(model.type))}</Badge>}
 
                     {model.capabilities?.includes('reasoning') && (
-                      <Tooltip label={t('Reasoning')} events={{ hover: true, focus: true, touch: true }}>
+                      <Tooltip label={t('Reasoning')}>
                         <Text span c="chatbox-warning" className="flex items-center" style={{ opacity: 0.7 }}>
                           <ScalableIcon icon={IconBulb} size={14} />
                         </Text>
                       </Tooltip>
                     )}
                     {model.capabilities?.includes('vision') && (
-                      <Tooltip label={t('Vision')} events={{ hover: true, focus: true, touch: true }}>
+                      <Tooltip label={t('Vision')}>
                         <Text span c="chatbox-brand" className="flex items-center" style={{ opacity: 0.7 }}>
                           <ScalableIcon icon={IconEye} size={14} />
                         </Text>
                       </Tooltip>
                     )}
                     {model.capabilities?.includes('tool_use') && (
-                      <Tooltip label={t('Tool Use')} events={{ hover: true, focus: true, touch: true }}>
+                      <Tooltip label={t('Tool Use')}>
                         <Text span c="chatbox-success" className="flex items-center" style={{ opacity: 0.7 }}>
                           <ScalableIcon icon={IconTool} size={14} />
                         </Text>
@@ -143,7 +148,6 @@ export function ModelList({
                     {model.contextWindow && (
                       <Tooltip
                         label={`${t('Context Window')}: ${formatTokenCount(model.contextWindow)} ${t('tokens')}`}
-                        events={{ hover: true, focus: true, touch: true }}
                       >
                         <Flex gap={2} align="center" c="dimmed" style={{ flexShrink: 0, opacity: 0.8 }}>
                           <ScalableIcon icon={IconDatabase} size={12} />
@@ -154,10 +158,7 @@ export function ModelList({
                       </Tooltip>
                     )}
                     {model.maxOutput && (
-                      <Tooltip
-                        label={`${t('Max Output')}: ${formatTokenCount(model.maxOutput)} ${t('tokens')}`}
-                        events={{ hover: true, focus: true, touch: true }}
-                      >
+                      <Tooltip label={`${t('Max Output')}: ${formatTokenCount(model.maxOutput)} ${t('tokens')}`}>
                         <Flex gap={2} align="center" c="dimmed" style={{ flexShrink: 0, opacity: 0.8 }}>
                           <ScalableIcon icon={IconLogout} size={12} />
                           <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
@@ -174,6 +175,7 @@ export function ModelList({
                 <Flex flex="0 0 auto" gap="xs" align="center" className="ml-auto">
                   {onEditModel && (
                     <Button
+                      data-testid={TestId.settings.providerModelEdit}
                       variant="transparent"
                       c="chatbox-tertiary"
                       p={0}
@@ -188,6 +190,7 @@ export function ModelList({
 
                   {onDeleteModel && (
                     <Button
+                      data-testid={TestId.settings.providerModelDelete}
                       variant="transparent"
                       c="chatbox-error"
                       p={0}

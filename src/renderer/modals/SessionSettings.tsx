@@ -1,53 +1,31 @@
+import { isActionAvailableInMode, resolveSessionMode } from '@chatbox/core/session/mode-policy'
 import NiceModal, { useModal } from '@ebay/nice-modal-react'
-import {
-  ActionIcon,
-  Box,
-  Button,
-  FileButton,
-  Flex,
-  Input,
-  Slider,
-  Stack,
-  Switch,
-  Text,
-  Textarea,
-  Tooltip,
-} from '@mantine/core'
-import { chatSessionSettings, pictureSessionSettings } from '@shared/defaults'
-import {
-  createMessage,
-  isChatSession,
-  isPictureSession,
-  ModelProviderEnum,
-  type Session,
-  type SessionSettings,
-} from '@shared/types'
-import {
-  type GoogleThinkingLevel,
-  getDefaultGoogleThinkingLevel,
-  getGoogleThinkingMode,
-  getSupportedGoogleThinkingLevels,
-} from '@shared/utils/google-thinking'
-import { IconInfoCircle, IconTrash, IconUpload } from '@tabler/icons-react'
+import { ActionIcon, Box, Button, FileButton, Flex, Input, Stack, Switch, Text, Textarea } from '@mantine/core'
+import { TestId } from '@shared/automation/testids'
+import { chatSessionSettings } from '@shared/defaults'
+import { createMessage, isChatSession, ModelProviderEnum, type Session } from '@shared/types'
+import { MAX_TOOL_CALLS_BEFORE_CONFIRMATION, shouldPauseOnToolCallLimit } from '@shared/utils/tool-call-limit-pause'
+import { IconTrash, IconUpload } from '@tabler/icons-react'
 import { pick } from 'lodash'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { rendererApplication } from '@/app/renderer-application'
 import { AdaptiveModal } from '@/components/common/AdaptiveModal'
 import { AssistantAvatar } from '@/components/common/Avatar'
 import LazyNumberInput from '@/components/common/LazyNumberInput'
 import MaxContextMessageCountSlider from '@/components/common/MaxContextMessageCountSlider'
 import { ScalableIcon } from '@/components/common/ScalableIcon'
-import SegmentedControl from '@/components/common/SegmentedControl'
 import SliderWithInput from '@/components/common/SliderWithInput'
+import { TooltipInfoTrigger } from '@/components/common/TooltipInfoTrigger'
 import { handleImageInputAndSave, ImageInStorage } from '@/components/Image'
-import ImageStyleSelect from '@/components/ImageStyleSelect'
+import { AppTooltip as Tooltip } from '@/components/ui/tooltip'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
 import { trackingEvent } from '@/packages/event'
 import storage from '@/storage'
 import { StorageKeyGenerator } from '@/storage/StoreStorage'
-import { updateSession } from '@/stores/chatStore'
-import { getSessionMeta, mergeSettings } from '@/stores/sessionHelpers'
-import { settingsStore, useSettingsStore } from '@/stores/settingsStore'
+import { getSessionAgentModeEntry } from '@/stores/session/agent-mode'
+import { getSessionMeta } from '@/stores/sessionHelpers'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { add as addToast } from '@/stores/toastActions'
 import { getMessageText } from '../../shared/utils/message'
 
@@ -131,7 +109,7 @@ const SessionSettingsModal = NiceModal.create(
       }
 
       if (!disableAutoSave) {
-        void updateSession(editingData.id, (s) => {
+        void rendererApplication.sessions.updateSessionWithMessages(editingData.id, (s) => {
           const merged = {
             ...(s ?? {}),
             ...getSessionMeta(editingData),
@@ -153,6 +131,14 @@ const SessionSettingsModal = NiceModal.create(
     if (!session || !editingData) {
       return null
     }
+
+    // Work Mode ignores the conversation's system prompt at request time — its
+    // identity comes from the global Soul — so the field is not offered. The
+    // stored prompt is left untouched.
+    const showSystemPrompt = isActionAvailableInMode(
+      'session-system-prompt',
+      resolveSessionMode(getSessionAgentModeEntry(session.id, session).value)
+    )
 
     return (
       <AdaptiveModal
@@ -200,7 +186,7 @@ const SessionSettingsModal = NiceModal.create(
                       <ActionIcon
                         color="chatbox-error"
                         size={24}
-                        radius="xl"
+                        radius="lg"
                         bottom={0}
                         right={0}
                         className="absolute"
@@ -219,6 +205,7 @@ const SessionSettingsModal = NiceModal.create(
             <Stack gap="xs">
               <Text fw={700}>{t('Name')}</Text>
               <Input
+                data-testid={TestId.settings.sessionName}
                 placeholder={t('Name')}
                 autoFocus={!isSmallScreen}
                 value={editingData.name}
@@ -229,75 +216,77 @@ const SessionSettingsModal = NiceModal.create(
               />
             </Stack>
 
-            <Textarea
-              label={t('Instruction (System Prompt)')}
-              placeholder={t('Copilot Prompt Demo') || ''}
-              autosize
-              minRows={2}
-              maxRows={12}
-              value={systemPrompt}
-              onChange={(event) => setSystemPrompt(event.target.value)}
-              classNames={{
-                input: '!text-chatbox-tint-primary',
-              }}
-              styles={{
-                input: { touchAction: 'manipulation' },
-              }}
-            />
-
             {isChatSession(session) && (
-              <Textarea
-                label={t('Summary prompt')}
-                description={t('Used by the session summary modal. Leave blank to use the global default.')}
-                placeholder={t('Leave blank to use the global default summary prompt.') || ''}
-                autosize
-                minRows={2}
-                maxRows={10}
-                value={editingData.summaryPrompt ?? ''}
-                onChange={(event) =>
-                  setEditingData({ ...editingData, summaryPrompt: event.target.value || undefined })
-                }
-                classNames={{
-                  input: '!text-chatbox-tint-primary',
-                }}
-                styles={{
-                  input: { touchAction: 'manipulation' },
-                }}
-              />
-            )}
-
-            <Stack gap="xs">
-              <Flex align="center" justify="space-between">
-                <Text fw={700}>{t('Specific model settings')}</Text>
-                <Button size="compact-sm" color="chatbox-brand" variant="transparent" onClick={onReset} fw={600}>
-                  {t('Reset')}
-                </Button>
-              </Flex>
-
-              <Box p="sm" className="border border-solid border-chatbox-border-primary rounded-md">
-                {isChatSession(session) && (
-                  <ChatConfig
-                    settings={editingData.settings}
-                    onSettingsChange={(d) =>
-                      setEditingData((_data) => {
-                        if (_data) {
-                          return {
-                            ..._data,
-                            settings: {
-                              ..._data?.settings,
-                              ...d,
-                            },
-                          }
-                        } else {
-                          return null
-                        }
-                      })
-                    }
+              <>
+                {showSystemPrompt && (
+                  <Textarea
+                    data-testid={TestId.settings.sessionPrompt}
+                    label={t('Instruction (System Prompt)')}
+                    placeholder={t('Copilot Prompt Demo') || ''}
+                    autosize
+                    minRows={2}
+                    maxRows={12}
+                    value={systemPrompt}
+                    onChange={(event) => setSystemPrompt(event.target.value)}
+                    classNames={{
+                      input: '!text-chatbox-tint-primary',
+                    }}
+                    styles={{
+                      input: { touchAction: 'manipulation' },
+                    }}
                   />
                 )}
-                {isPictureSession(session) && <PictureConfig dataEdit={editingData} setDataEdit={setEditingData} />}
-              </Box>
-            </Stack>
+
+                <Textarea
+                  label={t('Summary prompt')}
+                  description={t('Used by the session summary modal. Leave blank to use the global default.')}
+                  placeholder={t('Leave blank to use the global default summary prompt.') || ''}
+                  autosize
+                  minRows={2}
+                  maxRows={10}
+                  value={editingData.summaryPrompt ?? ''}
+                  onChange={(event) =>
+                    setEditingData({ ...editingData, summaryPrompt: event.target.value || undefined })
+                  }
+                  classNames={{
+                    input: '!text-chatbox-tint-primary',
+                  }}
+                  styles={{
+                    input: { touchAction: 'manipulation' },
+                  }}
+                />
+
+                <Stack gap="xs">
+                  <Flex align="center" justify="space-between">
+                    <Text fw={700}>{t('Specific model settings')}</Text>
+                    <Button size="compact-sm" color="chatbox-brand" variant="transparent" onClick={onReset} fw={600}>
+                      {t('Reset')}
+                    </Button>
+                  </Flex>
+
+                  <Box p="sm" className="border border-solid border-chatbox-border-primary rounded-lg">
+                    <ChatConfig
+                      settings={editingData.settings}
+                      onSettingsChange={(d) =>
+                        setEditingData((_data) => {
+                          if (_data) {
+                            return {
+                              ..._data,
+                              settings: {
+                                ..._data?.settings,
+                                ...d,
+                              },
+                            }
+                          } else {
+                            return null
+                          }
+                        })
+                      }
+                    />
+                  </Box>
+                </Stack>
+              </>
+            )}
 
             <Stack gap="xs">
               <Text fw={600}>{t('Background Settings')}</Text>
@@ -305,7 +294,7 @@ const SessionSettingsModal = NiceModal.create(
                 align="center"
                 gap="sm"
                 wrap="wrap"
-                className="p-sm border border-solid border-chatbox-border-primary rounded-md"
+                className="p-sm border border-solid border-chatbox-border-primary rounded-lg"
               >
                 <Flex align="center" gap="xxs">
                   <Text>{t('Background Image')}</Text>
@@ -313,8 +302,12 @@ const SessionSettingsModal = NiceModal.create(
                     label={t('Support jpg or png file smaller than 5MB. Overrides global background when set.')}
                     withArrow
                     offset={4}
+                    maw={320}
+                    className="!whitespace-normal"
+                    zIndex={3000}
+                    openOnTouch
                   >
-                    <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
+                    <TooltipInfoTrigger label={t('Background Image')} />
                   </Tooltip>
                 </Flex>
 
@@ -357,7 +350,7 @@ const SessionSettingsModal = NiceModal.create(
                     <ActionIcon
                       color="chatbox-error"
                       size={20}
-                      radius={10}
+                      radius="lg"
                       bottom={3}
                       right={3}
                       className="absolute"
@@ -381,7 +374,9 @@ const SessionSettingsModal = NiceModal.create(
 
         <AdaptiveModal.Actions>
           <AdaptiveModal.CloseButton onClick={onCancel} />
-          <Button onClick={onSave}>{t('Save')}</Button>
+          <Button data-testid={TestId.settings.sessionSave} onClick={onSave}>
+            {t('Save')}
+          </Button>
         </AdaptiveModal.Actions>
       </AdaptiveModal>
     )
@@ -389,380 +384,6 @@ const SessionSettingsModal = NiceModal.create(
 )
 
 export default SessionSettingsModal
-
-interface ThinkingBudgetConfigProps {
-  currentBudgetTokens: number
-  isEnabled: boolean
-  onConfigChange: (config: { budgetTokens: number; enabled: boolean }) => void
-  tooltipText: string
-  minValue?: number
-  maxValue?: number
-}
-
-function ThinkingBudgetConfig({
-  currentBudgetTokens,
-  isEnabled,
-  onConfigChange,
-  tooltipText,
-  minValue = 1024,
-  maxValue = 10000,
-}: ThinkingBudgetConfigProps) {
-  const { t } = useTranslation()
-
-  // Define preset values in one place
-  const PRESET_VALUES = useMemo(() => [2048, 5120, 10240], [])
-
-  const thinkingBudgetOptions = useMemo(
-    () => [
-      { label: t('Disabled'), value: 'disabled' },
-      { label: `${t('Low')} (2K)`, value: PRESET_VALUES[0].toString() },
-      { label: `${t('Medium')} (5K)`, value: PRESET_VALUES[1].toString() },
-      { label: `${t('High')} (10K)`, value: PRESET_VALUES[2].toString() },
-      { label: t('Custom'), value: 'custom' },
-    ],
-    [t, PRESET_VALUES]
-  )
-
-  // Add state to track custom mode selection
-  const [isCustomMode, setIsCustomMode] = useState(false)
-  const [userSelectedCustom, setUserSelectedCustom] = useState(false)
-
-  // Initialize custom mode based on current budget tokens
-  useEffect(() => {
-    if (isEnabled) {
-      const matchesPreset = PRESET_VALUES.includes(currentBudgetTokens)
-      // Only auto-set custom mode if user hasn't manually selected custom and value doesn't match presets
-      if (!matchesPreset && !isCustomMode && !userSelectedCustom) {
-        setIsCustomMode(true)
-      }
-      // Don't override user's manual custom selection even if value matches preset
-    } else {
-      // Only reset if currently in custom mode
-      if (isCustomMode || userSelectedCustom) {
-        setIsCustomMode(false)
-        setUserSelectedCustom(false)
-      }
-    }
-  }, [isEnabled, currentBudgetTokens, PRESET_VALUES, isCustomMode, userSelectedCustom])
-
-  // Determine current segment value
-  const getCurrentSegmentValue = useCallback(() => {
-    if (!isEnabled) return 'disabled'
-
-    if (isCustomMode || userSelectedCustom) return 'custom'
-
-    const matchingPreset = PRESET_VALUES.find((preset) => preset === currentBudgetTokens)
-    return matchingPreset ? matchingPreset.toString() : 'custom'
-  }, [isEnabled, isCustomMode, userSelectedCustom, PRESET_VALUES, currentBudgetTokens])
-
-  const handleThinkingConfigChange = useCallback(
-    (value: string) => {
-      if (value === 'disabled') {
-        setIsCustomMode(false)
-        setUserSelectedCustom(false)
-        onConfigChange({ budgetTokens: 0, enabled: false })
-      } else if (value === 'custom') {
-        setIsCustomMode(true)
-        setUserSelectedCustom(true) // Mark that user manually selected custom
-        // For disabled to custom switch, use a reasonable default
-        const customValue = currentBudgetTokens > 0 ? currentBudgetTokens : minValue || PRESET_VALUES[0]
-        onConfigChange({ budgetTokens: customValue, enabled: true })
-      } else {
-        setIsCustomMode(false)
-        setUserSelectedCustom(false)
-        onConfigChange({ budgetTokens: parseInt(value), enabled: true })
-      }
-    },
-    [currentBudgetTokens, minValue, PRESET_VALUES, onConfigChange]
-  )
-
-  const handleCustomBudgetChange = useCallback(
-    (v: number | undefined) => {
-      onConfigChange({ budgetTokens: v || minValue, enabled: true })
-    },
-    [minValue, onConfigChange]
-  )
-
-  const currentSegmentValue = getCurrentSegmentValue()
-
-  return (
-    <Stack gap="md" style={{ minWidth: 0 }}>
-      <Flex align="center" gap="xs">
-        <Text size="sm" fw="600">
-          {t('Thinking Budget')}
-        </Text>
-        <Tooltip
-          label={tooltipText}
-          withArrow={true}
-          maw={320}
-          className="!whitespace-normal"
-          zIndex={3000}
-          events={{ hover: true, focus: true, touch: true }}
-        >
-          <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
-        </Tooltip>
-      </Flex>
-
-      <div style={{ minWidth: 0, overflowX: 'auto' }}>
-        <SegmentedControl
-          key="thinking-budget-control"
-          value={currentSegmentValue}
-          onChange={handleThinkingConfigChange}
-          data={thinkingBudgetOptions}
-        />
-      </div>
-
-      {currentSegmentValue === 'custom' && (
-        <SliderWithInput
-          min={minValue}
-          max={maxValue}
-          step={1}
-          value={currentBudgetTokens}
-          onChange={handleCustomBudgetChange}
-        />
-      )}
-    </Stack>
-  )
-}
-
-interface ThinkingLevelConfigProps {
-  currentLevel: GoogleThinkingLevel
-  supportedLevels: GoogleThinkingLevel[]
-  onLevelChange: (thinkingLevel: GoogleThinkingLevel) => void
-  tooltipText: string
-}
-
-function ThinkingLevelConfig({ currentLevel, supportedLevels, onLevelChange, tooltipText }: ThinkingLevelConfigProps) {
-  const { t } = useTranslation()
-
-  const thinkingLevelOptions = useMemo(
-    () =>
-      supportedLevels.map((level) => ({
-        label:
-          level === 'minimal'
-            ? t('Minimal')
-            : level === 'low'
-              ? t('Low')
-              : level === 'medium'
-                ? t('Medium')
-                : t('High'),
-        value: level,
-      })),
-    [supportedLevels, t]
-  )
-
-  const handleThinkingLevelChange = useCallback(
-    (value: string) => {
-      onLevelChange(value as GoogleThinkingLevel)
-    },
-    [onLevelChange]
-  )
-
-  return (
-    <Stack gap="md" style={{ minWidth: 0 }}>
-      <Flex align="center" gap="xs">
-        <Text size="sm" fw="600">
-          {t('Thinking Level')}
-        </Text>
-        <Tooltip
-          label={tooltipText}
-          withArrow={true}
-          maw={320}
-          className="!whitespace-normal"
-          zIndex={3000}
-          events={{ hover: true, focus: true, touch: true }}
-        >
-          <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
-        </Tooltip>
-      </Flex>
-
-      <div style={{ minWidth: 0, overflowX: 'auto' }}>
-        <SegmentedControl
-          key={`thinking-level-control:${supportedLevels.join(',')}`}
-          value={currentLevel}
-          onChange={handleThinkingLevelChange}
-          data={thinkingLevelOptions}
-          fullWidth={false}
-        />
-      </div>
-    </Stack>
-  )
-}
-
-function ClaudeProviderConfig({
-  settings,
-  onSettingsChange,
-}: {
-  settings: SessionSettings
-  onSettingsChange: (data: Session['settings']) => void
-}) {
-  const { t } = useTranslation()
-  const providerOptions = settings?.providerOptions?.claude
-
-  const handleConfigChange = (config: { budgetTokens: number; enabled: boolean }) => {
-    onSettingsChange({
-      providerOptions: {
-        claude: {
-          thinking: {
-            type: config.enabled ? 'enabled' : 'disabled',
-            budgetTokens: config.budgetTokens,
-          },
-        },
-      },
-    })
-  }
-
-  return (
-    <ThinkingBudgetConfig
-      currentBudgetTokens={providerOptions?.thinking?.budgetTokens || 1024}
-      isEnabled={providerOptions?.thinking?.type === 'enabled'}
-      onConfigChange={handleConfigChange}
-      tooltipText={t('Thinking Budget only works for 3.7 or later models')}
-      minValue={1024}
-      maxValue={10000}
-    />
-  )
-}
-
-function OpenAIProviderConfig({
-  settings,
-  onSettingsChange,
-}: {
-  settings: SessionSettings
-  onSettingsChange: (data: Session['settings']) => void
-}) {
-  const { t } = useTranslation()
-  const providerOptions = settings?.providerOptions?.openai
-
-  // Memoize options to prevent recreation on every render
-  const reasoningEffortOptions = useMemo(
-    () => [
-      { label: t('Disabled'), value: 'null' },
-      { label: t('Low'), value: 'low' },
-      { label: t('Medium'), value: 'medium' },
-      { label: t('High'), value: 'high' },
-    ],
-    [t]
-  )
-
-  const handleReasoningEffortChange = useCallback(
-    (value: string) => {
-      const reasoningEffort = value === 'null' ? undefined : (value as 'low' | 'medium' | 'high')
-      onSettingsChange({
-        providerOptions: {
-          openai: { reasoningEffort },
-        },
-      })
-    },
-    [onSettingsChange]
-  )
-
-  // Simplify value calculation to avoid instability
-  const currentValue = useMemo(() => {
-    const effort = providerOptions?.reasoningEffort
-    return effort === undefined ? 'null' : effort
-  }, [providerOptions?.reasoningEffort])
-
-  return (
-    <Stack gap="md">
-      <Flex align="center" gap="xs">
-        <Text size="sm" fw="600">
-          {t('Thinking Effort')}
-        </Text>
-        <Tooltip
-          label={t('Thinking Effort only works for OpenAI o-series models')}
-          withArrow={true}
-          maw={320}
-          className="!whitespace-normal"
-          zIndex={3000}
-          events={{ hover: true, focus: true, touch: true }}
-        >
-          <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
-        </Tooltip>
-      </Flex>
-
-      <SegmentedControl
-        key="reasoning-effort-control"
-        value={currentValue}
-        onChange={handleReasoningEffortChange}
-        data={reasoningEffortOptions}
-      />
-    </Stack>
-  )
-}
-
-function GoogleProviderConfig({
-  settings,
-  onSettingsChange,
-}: {
-  settings: SessionSettings
-  onSettingsChange: (data: Session['settings']) => void
-}) {
-  const { t } = useTranslation()
-  const modelId = settings?.modelId || ''
-  const providerOptions = settings?.providerOptions?.google
-  const thinkingMode = getGoogleThinkingMode(modelId)
-  const supportedLevels = useMemo(() => getSupportedGoogleThinkingLevels(modelId), [modelId])
-
-  const handleBudgetConfigChange = (config: { budgetTokens: number; enabled: boolean }) => {
-    onSettingsChange({
-      providerOptions: {
-        google: { thinkingConfig: { thinkingBudget: config.budgetTokens, includeThoughts: config.enabled } },
-      },
-    })
-  }
-
-  const handleLevelChange = useCallback(
-    (thinkingLevel: GoogleThinkingLevel) => {
-      onSettingsChange({
-        providerOptions: {
-          google: { thinkingConfig: { thinkingLevel, includeThoughts: true } },
-        },
-      })
-    },
-    [onSettingsChange]
-  )
-
-  const currentThinkingLevel = useMemo(() => {
-    const thinkingLevel = providerOptions?.thinkingConfig?.thinkingLevel
-
-    if (supportedLevels.length === 0) {
-      return undefined
-    }
-
-    if (thinkingLevel && supportedLevels.includes(thinkingLevel)) {
-      return thinkingLevel
-    }
-
-    return getDefaultGoogleThinkingLevel(modelId)
-  }, [modelId, providerOptions?.thinkingConfig?.thinkingLevel, supportedLevels])
-
-  if (thinkingMode === 'level' && currentThinkingLevel) {
-    return (
-      <ThinkingLevelConfig
-        currentLevel={currentThinkingLevel}
-        supportedLevels={supportedLevels}
-        onLevelChange={handleLevelChange}
-        tooltipText={t('Thinking Level only works for Gemini 3 models')}
-      />
-    )
-  }
-
-  if (thinkingMode !== 'budget') {
-    return null
-  }
-
-  return (
-    <ThinkingBudgetConfig
-      currentBudgetTokens={providerOptions?.thinkingConfig?.thinkingBudget || 0}
-      isEnabled={(providerOptions?.thinkingConfig?.thinkingBudget || 0) > 0}
-      onConfigChange={handleBudgetConfigChange}
-      tooltipText={t('Thinking Budget only works for Gemini 2.5 models')}
-      minValue={0}
-      maxValue={10000}
-    />
-  )
-}
 
 export function ChatConfig({
   settings,
@@ -773,10 +394,12 @@ export function ChatConfig({
 }) {
   const { t } = useTranslation()
   const globalSettingsStream = useSettingsStore((s) => s.stream)
+  const globalPauseOnToolCallLimit = useSettingsStore((s) => s.pauseOnToolCallLimit)
 
   return (
     <Stack gap="md">
       <MaxContextMessageCountSlider
+        inputTestId={TestId.settings.sessionMaxContext}
         value={settings?.maxContextMessageCount ?? chatSessionSettings().maxContextMessageCount!}
         onChange={(v) => onSettingsChange({ maxContextMessageCount: v })}
       />
@@ -794,13 +417,18 @@ export function ChatConfig({
             maw={320}
             className="!whitespace-normal"
             zIndex={3000}
-            events={{ hover: true, focus: true, touch: true }}
+            openOnTouch
           >
-            <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
+            <TooltipInfoTrigger label={t('Temperature')} />
           </Tooltip>
         </Flex>
 
-        <SliderWithInput value={settings?.temperature} onChange={(v) => onSettingsChange({ temperature: v })} max={2} />
+        <SliderWithInput
+          inputTestId={TestId.settings.sessionTemperature}
+          value={settings?.temperature}
+          onChange={(v) => onSettingsChange({ temperature: v })}
+          max={2}
+        />
       </Stack>
 
       <Stack gap="xs">
@@ -816,13 +444,18 @@ export function ChatConfig({
             maw={320}
             className="!whitespace-normal"
             zIndex={3000}
-            events={{ hover: true, focus: true, touch: true }}
+            openOnTouch
           >
-            <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
+            <TooltipInfoTrigger label="Top P" />
           </Tooltip>
         </Flex>
 
-        <SliderWithInput value={settings?.topP} onChange={(v) => onSettingsChange({ topP: v })} max={1} />
+        <SliderWithInput
+          inputTestId={TestId.settings.sessionTopP}
+          value={settings?.topP}
+          onChange={(v) => onSettingsChange({ topP: v })}
+          max={1}
+        />
       </Stack>
 
       <Flex justify="space-between" align="center">
@@ -838,17 +471,18 @@ export function ChatConfig({
             maw={320}
             className="!whitespace-normal"
             zIndex={3000}
-            events={{ hover: true, focus: true, touch: true }}
+            openOnTouch
           >
-            <ScalableIcon icon={IconInfoCircle} size={20} className="text-chatbox-tint-tertiary" />
+            <TooltipInfoTrigger label={t('Max Output Tokens')} />
           </Tooltip>
         </Flex>
 
         <LazyNumberInput
+          inputTestId={TestId.settings.sessionMaxTokens}
           width={96}
           value={settings?.maxTokens}
           onChange={(v) => onSettingsChange({ maxTokens: typeof v === 'number' ? v : undefined })}
-          min={0}
+          min={1}
           step={1024}
           allowDecimal={false}
           placeholder={t('Not set') || ''}
@@ -869,54 +503,34 @@ export function ChatConfig({
         </Stack>
       )}
 
-      {settings?.provider === ModelProviderEnum.Claude && (
-        <ClaudeProviderConfig settings={settings} onSettingsChange={onSettingsChange} />
-      )}
-      {settings?.provider === ModelProviderEnum.OpenAI && (
-        <OpenAIProviderConfig settings={settings} onSettingsChange={onSettingsChange} />
-      )}
-      {settings?.provider === ModelProviderEnum.Gemini && (
-        <GoogleProviderConfig settings={settings} onSettingsChange={onSettingsChange} />
-      )}
-    </Stack>
-  )
-}
-
-function PictureConfig(props: { dataEdit: Session; setDataEdit: (data: Session) => void }) {
-  const { t } = useTranslation()
-  const { dataEdit, setDataEdit } = props
-  const globalSettings = settingsStore.getState().getSettings()
-  const sessionSettings = mergeSettings(globalSettings, dataEdit.settings || {}, dataEdit.type || 'chat')
-  const updateSettingsEdit = (updated: Partial<SessionSettings>) => {
-    setDataEdit({
-      ...dataEdit,
-      settings: {
-        ...(dataEdit.settings || {}),
-        ...updated,
-      },
-    })
-  }
-  return (
-    <Stack gap="md" className="my-4">
-      <ImageStyleSelect
-        value={sessionSettings.dalleStyle || pictureSessionSettings().dalleStyle!}
-        onChange={(v) => updateSettingsEdit({ dalleStyle: v })}
-        className={sessionSettings.dalleStyle === undefined ? 'opacity-50' : ''}
-      />
-      <Stack>
-        <Text size="sm" fw="600">
-          {t('Number of Images per Reply')}
-        </Text>
-        <Slider
-          value={sessionSettings.imageGenerateNum || pictureSessionSettings().imageGenerateNum!}
-          onChange={(v) => updateSettingsEdit({ imageGenerateNum: v })}
-          min={1}
-          max={10}
-          step={1}
-          marks={Array.from({ length: 10 }).map((_, i) => ({
-            value: i + 1,
-          }))}
-        />
+      <Stack gap="xs" py="xs">
+        <Flex align="center" justify="space-between" gap="xs">
+          <Flex align="center" gap="xs">
+            <Text size="sm" fw="600">
+              {t('Pause after every {{count}} steps', { count: MAX_TOOL_CALLS_BEFORE_CONFIRMATION })}
+            </Text>
+            <Tooltip
+              label={t(
+                "Long tasks pause for confirmation after every {{count}} steps so you can check they're on track. Turn off to let them run uninterrupted.",
+                { count: MAX_TOOL_CALLS_BEFORE_CONFIRMATION }
+              )}
+              withArrow={true}
+              maw={320}
+              className="!whitespace-normal"
+              zIndex={3000}
+              openOnTouch
+            >
+              <TooltipInfoTrigger
+                label={t('Pause after every {{count}} steps', { count: MAX_TOOL_CALLS_BEFORE_CONFIRMATION })}
+              />
+            </Tooltip>
+          </Flex>
+          <Switch
+            data-testid={TestId.settings.sessionPauseOnToolCallLimitSwitch}
+            checked={shouldPauseOnToolCallLimit(settings, { pauseOnToolCallLimit: globalPauseOnToolCallLimit })}
+            onChange={(v) => onSettingsChange({ pauseOnToolCallLimit: v.target.checked })}
+          />
+        </Flex>
       </Stack>
     </Stack>
   )

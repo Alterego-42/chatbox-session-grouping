@@ -1,6 +1,6 @@
 import type { SessionGroup, SessionMeta } from '@shared/types'
 import { createGroup } from '../groupStore'
-import { moveSessionToGroup } from '../sessionActions'
+import { moveSessionToGroup } from './groups'
 
 export interface OrganizeProposal {
   moves: Array<{ sessionId: string; targetGroupId: string | null }>

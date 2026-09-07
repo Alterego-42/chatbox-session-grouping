@@ -4,16 +4,27 @@
  * This module provides all session-related operations for Chatbox.
  * Internal helpers (prefixed with _) are intentionally not exported.
  *
- * Public exports: 40 functions + types + state
+ * Public exports: 41 functions + types + state
  * - CRUD (8): Session lifecycle operations
  * - Messages (5): Message CRUD and user input handling
  * - Threads (9): Thread/history management
- * - Forks (5): Message branching operations
+ * - Forks (6): Message branching operations
  * - Generation (8): AI generation orchestration
  * - Naming (4): Session/thread naming
  * - Export (1): Export functionality
  */
 
+// Action gating (2 functions)
+export { getSessionLockStateNow, guardSessionAction } from './action-guard'
+export {
+  createDefaultAgentModeEntry,
+  createNewChatAgentModeEntry,
+  getSessionAgentModeEntry,
+  getSessionAgentModeFromSession,
+  lockSessionAgentMode,
+  setSessionAgentMode,
+  useSessionAgentMode,
+} from './agent-mode'
 export { createAttachmentResolver } from './attachment-resolver'
 // CRUD operations (8 functions)
 export {
@@ -21,25 +32,60 @@ export {
   clearConversationList,
   copyAndSwitchSession,
   createEmpty,
+  deleteSession,
+  deleteSessions,
+  refreshSessionListCache,
+  reorderSessionInGroup,
   reorderSessions,
   switchCurrentSession,
   switchToIndex,
   switchToNext,
 } from './crud'
-// Export operations (1 function)
+// Export operations
 export { exportSessionChat } from './export'
-// Fork operations (5 functions)
-export { createNewFork, deleteFork, expandFork, findMessageLocation, switchFork } from './forks'
+// Fork operations (7 functions)
+export {
+  createNewFork,
+  createSaveAndResendFork,
+  deleteFork,
+  expandFork,
+  findMessageLocation,
+  switchFork,
+  switchForkTo,
+} from './forks'
 // Generation operations (8 functions)
 export {
   generate,
   generateMore,
-  generateMoreInNewFork,
   genMessageContext,
   getMessageThreadContext,
   getSessionWebBrowsing,
   regenerateInNewFork,
+  retryFromLastToolCallAfterApiError,
+  saveAndResendMessage,
 } from './generation'
+export type { GenerationCancellationDependencies } from './generation-cancellation'
+export { stopAllMessageGenerations, stopMessageGeneration } from './generation-cancellation'
+// Session grouping (fork): per-group paginated queries, group operations, manager session, summaries
+export {
+  groupSessionsQueryKey,
+  invalidateSessionLists,
+  useGroupSessionCount,
+  useSessionListByGroup,
+  useStarredSessions,
+} from './group-queries'
+export { moveSessionToGroup, reorderChildGroups, reorderGroups, reorderWithinGroup } from './groups'
+export { ensureManagerSession } from './manager-session'
+// Message queue (queue user messages while a generation is running)
+export type { QueuedUserMessage, QueuePausedReason } from './message-queue'
+export {
+  clearQueue,
+  enqueueUserMessage,
+  messageQueueStore,
+  removeQueuedMessage,
+  resumeQueueAndDrain,
+} from './message-queue'
+export { hasContentForAutoTitle, hasSuccessfulUserAssistantTurn, isSuccessfulAssistantReply } from './message-success'
 // Message operations (5 functions)
 export {
   insertMessage,
@@ -54,13 +100,11 @@ export {
 export {
   modifyNameAndThreadName,
   modifyThreadName,
-  scheduleGenerateNameAndThreadName,
-  scheduleGenerateThreadName,
+  syncSessionAutoTitle,
 } from './naming'
 export { getOCRModel, ocrImagesInMessages } from './ocr-helper'
-// Orchestration and AI helpers
-export { orchestrateGeneration } from './orchestration'
-export { createLoadingPictures } from './pictures'
+export type { SessionSummary, SummaryReadResult } from './summary'
+export { deleteSessionSummary, generateSessionSummary, getSessionSummary } from './summary'
 // Thread operations (9 functions)
 export {
   compressAndCreateThread,
@@ -82,3 +126,4 @@ export {
   initializeTargetMessage,
   trackGenerateEvent,
 } from './utils'
+export { resolveWebBrowsingMode } from './web-browsing'

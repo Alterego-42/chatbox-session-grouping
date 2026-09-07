@@ -35,7 +35,8 @@
   --chatbox-tint-gray: #868e96;
 
   --chatbox-tint-disabled: #adb5bd;
-  --chatbox-tint-brand: #228be6;
+  --chatbox-brand: #228be6;
+  --chatbox-tint-brand: var(--chatbox-brand);
   --chatbox-tint-placeholder: #adb5bd;
   --chatbox-tint-error: #fa5252;
   --chatbox-tint-error-disabled: #ff8787;
@@ -47,20 +48,20 @@
   --chatbox-border-warning: #fab005;
   --chatbox-border-error: #fa5252;
   --chatbox-border-success: #12b886;
-  --chatbox-border-brand: #228be6;
+  --chatbox-border-brand: var(--chatbox-brand);
 
   --chatbox-background-primary: #ffffff;
   --chatbox-background-primary-hover: #f8f9fa;
-  --chatbox-background-secondary: #f1f3f5;
+  --chatbox-background-secondary: #f3f3f3;
   --chatbox-background-secondary-hover: #e9ecef;
   --chatbox-background-tertiary: #dee2e6;
   --chatbox-background-tertiary-hover: #ced4da;
   --chatbox-background-disabled: #e9ecef;
 
-  --chatbox-background-brand-primary: #228be6;
-  --chatbox-background-brand-primary-hover: #1c7ed6;
-  --chatbox-background-brand-secondary: rgb(34, 139, 230, 0.08);
-  --chatbox-background-brand-secondary-hover: rgb(34, 139, 230, 0.16);
+  --chatbox-background-brand-primary: var(--chatbox-brand);
+  --chatbox-background-brand-primary-hover: color-mix(in srgb, var(--chatbox-brand), black 12%);
+  --chatbox-background-brand-secondary: color-mix(in srgb, var(--chatbox-brand), transparent 92%);
+  --chatbox-background-brand-secondary-hover: color-mix(in srgb, var(--chatbox-brand), transparent 84%);
 
   --chatbox-background-gray-primary: #868e96;
   --chatbox-background-gray-primary-hover: #495057;
@@ -84,6 +85,27 @@
 
   --chatbox-background-mask-overlay: rgb(59, 59, 59, 0.64);
   --chatbox-background-mask-lighten: rgb(255, 255, 255, 0.76);
+
+  /* shadcn semantic colors */
+  --background: var(--chatbox-background-primary);
+  --foreground: var(--chatbox-tint-primary);
+  --card: var(--chatbox-background-primary);
+  --card-foreground: var(--chatbox-tint-primary);
+  --popover: var(--chatbox-background-primary);
+  --popover-foreground: var(--chatbox-tint-primary);
+  --primary: var(--chatbox-tint-primary);
+  --primary-foreground: var(--chatbox-background-primary);
+  --secondary: var(--chatbox-background-secondary);
+  --secondary-foreground: var(--chatbox-tint-primary);
+  --muted: var(--chatbox-background-secondary);
+  --muted-foreground: var(--chatbox-tint-tertiary);
+  --accent: var(--chatbox-background-secondary);
+  --accent-foreground: var(--chatbox-tint-primary);
+  --destructive: var(--chatbox-tint-error);
+  --destructive-foreground: var(--chatbox-tint-white);
+  --border: var(--chatbox-border-primary);
+  --input: var(--chatbox-border-primary);
+  --ring: var(--chatbox-tint-brand);
 }
 
 :root[data-mantine-color-scheme="dark"] {
@@ -97,7 +119,8 @@
   --chatbox-tint-gray: #868e96;
 
   --chatbox-tint-disabled: #696969;
-  --chatbox-tint-brand: #4dabf7;
+  --chatbox-brand: #228be6;
+  --chatbox-tint-brand: var(--chatbox-brand);
   --chatbox-tint-placeholder: #828282;
   --chatbox-tint-error: #f03e3e;
   --chatbox-tint-error-disabled: rgb(224, 49, 49, 0.5);
@@ -109,7 +132,7 @@
   --chatbox-border-warning: #ffe066;
   --chatbox-border-error: #f03e3e;
   --chatbox-border-success: #63e6be;
-  --chatbox-border-brand: #1971c2;
+  --chatbox-border-brand: var(--chatbox-brand);
 
   --chatbox-background-primary: #242424;
   --chatbox-background-primary-hover: #1f1f1f;
@@ -119,10 +142,10 @@
   --chatbox-background-tertiary-hover: #696969;
   --chatbox-background-disabled: #2e2e2e;
 
-  --chatbox-background-brand-primary: #1971c2;
-  --chatbox-background-brand-primary-hover: #1864ab;
-  --chatbox-background-brand-secondary: rgb(28, 126, 214, 0.2);
-  --chatbox-background-brand-secondary-hover: rgb(34, 139, 230, 0.24);
+  --chatbox-background-brand-primary: var(--chatbox-brand);
+  --chatbox-background-brand-primary-hover: color-mix(in srgb, var(--chatbox-brand), black 12%);
+  --chatbox-background-brand-secondary: color-mix(in srgb, var(--chatbox-brand), transparent 80%);
+  --chatbox-background-brand-secondary-hover: color-mix(in srgb, var(--chatbox-brand), transparent 76%);
 
   --chatbox-background-gray-primary: #343a40;
   --chatbox-background-gray-primary-hover: #212529;
@@ -229,9 +252,9 @@
 }
 
 .katex-display > .katex {
-  /* width: auto; */
-  /* max-width: 100%; */
   display: inline-block;
+  /* Keep the box at least as wide as the line so \tag stays on the right. */
+  min-width: 100%;
 }
 
 /* Hide scrollbar for inline math */
@@ -290,10 +313,6 @@ html[data-need-room-for-windows-controls="true"] .pswp__top-bar {
   width: 12px !important;
 }
 
-*::-webkit-scrollbar-corner {
-  background-color: transparent;
-}
-
 div[data-vaul-handle] {
   margin: 12px auto;
   width: 64px;
@@ -309,4 +328,121 @@ div[data-vaul-overlay] {
 }
 div[data-vaul-drawer] {
   z-index: 2000;
+}
+
+/* Rotating border beam on the pending-approval card (ToolCallPartUI): a bright amber
+   segment travels around a faint ring. Without @property support the ring degrades
+   to a static gradient border. */
+@property --chatbox-approval-ring-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes chatbox-approval-ring-spin {
+  to {
+    --chatbox-approval-ring-angle: 360deg;
+  }
+}
+
+.chatbox-approval-ring {
+  position: relative;
+}
+
+/* The band is drawn just inside the card edge (inset: 0), because ancestor containers
+   (Collapse, virtualized list items) clip anything that sticks out of the card. */
+.chatbox-approval-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--chatbox-approval-ring-angle),
+    color-mix(in srgb, var(--chatbox-tint-warning) 18%, transparent),
+    color-mix(in srgb, var(--chatbox-tint-warning) 95%, transparent) 12%,
+    color-mix(in srgb, var(--chatbox-tint-warning) 18%, transparent) 30%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: chatbox-approval-ring-spin 2.5s linear infinite;
+  pointer-events: none;
+}
+
+/* Pending-action bar above the input box: item advance, progress pop, resolve
+   flash, and the attention pulse played when the user clicks the locked input. */
+@keyframes chatbox-action-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chatbox-action-item-enter {
+  animation: chatbox-action-item-in 240ms ease;
+}
+
+@keyframes chatbox-action-progress-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.chatbox-action-progress-pop {
+  animation: chatbox-action-progress-pop 320ms ease;
+}
+
+@keyframes chatbox-action-resolve-flash {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+.chatbox-action-resolve-flash {
+  animation: chatbox-action-resolve-flash 700ms ease forwards;
+  pointer-events: none;
+}
+
+@keyframes chatbox-action-bar-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--chatbox-tint-warning) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+
+/* Two identical classes let React restart the animation by swapping class names. */
+.chatbox-action-bar-pulse,
+.chatbox-action-bar-pulse-alt {
+  animation: chatbox-action-bar-pulse 600ms ease-out 2;
 }

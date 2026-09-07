@@ -1,6 +1,14 @@
-// Shared state for debouncing/deduplicating name generation requests.
-// Isolated here to avoid circular imports between naming.ts and other session modules.
+import { rendererApplication } from '@/app/renderer-application'
 
-// Key format: `name-${sessionId}` or `thread-${sessionId}`
-export const pendingNameGenerations = new Map<string, ReturnType<typeof setTimeout>>()
-export const activeNameGenerations = new Set<string>()
+/**
+ * Compatibility bridge for callers added before generation runtime extraction.
+ * The portable runtime store owns the actual per-Session drain set.
+ */
+export function registerUnsettledStreamDrain(sessionId: string, drain: Promise<void>): void {
+  rendererApplication.generationRuntime.registerUnsettledStreamDrain(sessionId, drain)
+}
+
+/** Resolves once every currently registered unsettled stream for the Session has drained. */
+export function waitForUnsettledStreamDrains(sessionId: string): Promise<void> | undefined {
+  return rendererApplication.generationRuntime.waitForUnsettledStreamDrains(sessionId)
+}

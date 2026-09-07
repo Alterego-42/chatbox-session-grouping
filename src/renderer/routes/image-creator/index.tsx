@@ -33,11 +33,13 @@ import Page from '@/components/layout/Page'
 import { type ImageModelGroup, useImageModelGroups } from '@/hooks/useImageModelGroups'
 import { useProviders } from '@/hooks/useProviders'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
+import useVersion from '@/hooks/useVersion'
 import { getLogger } from '@/lib/utils'
+import { resumeImageGenerationWithFollowUp } from '@/packages/chatbox-cli/image-task-follow-up'
 import storage from '@/storage'
 import { StorageKeyGenerator } from '@/storage/StoreStorage'
 import { useAuthInfoStore } from '@/stores/authInfoStore'
-import { cancelGeneration, createAndGenerate, resumeGeneration, retryGeneration } from '@/stores/imageGenerationActions'
+import { cancelGeneration, createAndGenerate, retryGeneration } from '@/stores/imageGenerationActions'
 import {
   deleteRecord,
   IMAGE_GEN_LIST_QUERY_KEY,
@@ -62,6 +64,7 @@ import { GeneratedImagesGallery } from './-components/GeneratedImagesGallery'
 import { HistoryPanel } from './-components/HistoryPanel'
 import { ImageGenerationErrorTips } from './-components/ImageGenerationErrorTips'
 import { MobileHistoryDrawer, MobileModelDrawer, MobileRatioDrawer } from './-components/MobileDrawers'
+import { resolveImageModelSelection } from './-components/model-selection'
 import { PromptDisplay } from './-components/PromptDisplay'
 import { ReferenceImagesPreview } from './-components/ReferenceImagesPreview'
 import { LoadingShimmer } from './-components/Shimmer'
@@ -156,7 +159,7 @@ function InputToolbar({
                 <IconChevronRight size={14} className="text-[var(--chatbox-tint-tertiary)] rotate-90" />
               </UnstyledButton>
             </Menu.Target>
-            <Menu.Dropdown className="!rounded-2xl" style={{ minWidth: 100 }}>
+            <Menu.Dropdown className="!rounded-lg" style={{ minWidth: 100 }}>
               {ratioOptions.map((ratio) => (
                 <Menu.Item key={ratio} onClick={() => onRatioSelect(ratio)} className="!rounded-lg">
                   <Text size="sm" fw={500} ta="center">
@@ -216,9 +219,17 @@ function ImageCreatorPage() {
   const hasLicense = useSettingsStore((s) => Boolean(s.licenseKey))
   const hasExpiredLicense = useSettingsStore((s) => s.hasExpiredLicense)
   const isLoggedIn = useAuthInfoStore((s) => Boolean(s.accessToken && s.refreshToken))
+  const { isExceeded, isExceededResolved } = useVersion()
   const welcomeCardMode = useMemo(
-    () => getHomeWelcomeCardMode({ providerCount: providers.length, isLoggedIn, hasLicense, hasExpiredLicense }),
-    [providers.length, isLoggedIn, hasLicense, hasExpiredLicense]
+    () =>
+      getHomeWelcomeCardMode({
+        providerCount: providers.length,
+        isLoggedIn,
+        hasLicense,
+        hasExpiredLicense,
+        hideForStoreReview: isExceeded || !isExceededResolved,
+      }),
+    [providers.length, isLoggedIn, hasLicense, hasExpiredLicense, isExceeded, isExceededResolved]
   )
 
   const [prompt, setPrompt] = useState('')
@@ -275,18 +286,18 @@ function ImageCreatorPage() {
   }, [])
 
   useEffect(() => {
-    if (imageModelGroups.length === 0) return
-    const selectedGroup = imageModelGroups.find((group) => group.providerId === selectedProvider)
-    const selectedOption = selectedGroup?.models.find((model) => model.modelId === selectedModel)
-    if (selectedOption) return
+    const nextSelection = resolveImageModelSelection(imageModelGroups, selectedProvider, selectedModel)
+    if (!nextSelection) {
+      setSelectedProvider('')
+      setSelectedModel('')
+      setSelectedRatio('auto')
+      return
+    }
+    if (nextSelection.provider === selectedProvider && nextSelection.model === selectedModel) return
 
-    const firstGroup = imageModelGroups.find((group) => group.models.length > 0)
-    const firstModel = firstGroup?.models[0]
-    if (!firstGroup || !firstModel) return
-
-    setSelectedProvider(firstGroup.providerId)
-    setSelectedModel(firstModel.modelId)
-    const ratioOptionsForFirstModel = getRatioOptionsForModel(firstModel.modelId)
+    setSelectedProvider(nextSelection.provider)
+    setSelectedModel(nextSelection.model)
+    const ratioOptionsForFirstModel = getRatioOptionsForModel(nextSelection.model)
     setSelectedRatio((prev) => (ratioOptionsForFirstModel.includes(prev) ? prev : 'auto'))
   }, [imageModelGroups, selectedProvider, selectedModel])
 
@@ -534,7 +545,7 @@ function ImageCreatorPage() {
   ) : (
     <UnstyledButton
       onClick={() => setShowHistory(!showHistory)}
-      className={`controls flex items-center gap-1.5 px-3 py-1.5 rounded-sm ${showHistory ? 'bg-[var(--chatbox-background-tertiary)]' : 'bg-[var(--chatbox-background-secondary)]'}`}
+      className={`controls flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${showHistory ? 'bg-[var(--chatbox-background-tertiary)]' : 'bg-[var(--chatbox-background-secondary)]'}`}
     >
       <IconHistory size={18} className="text-[var(--chatbox-tint-secondary)]" />
       <Text size="sm" className="text-[var(--chatbox-tint-secondary)]">
@@ -564,7 +575,7 @@ function ImageCreatorPage() {
                       <GeneratedImagesGallery
                         images={currentRecord.generatedImages}
                         onUseAsReference={(urlOrKey) => handleUseAsReference(urlOrKey, currentRecord.id)}
-                        onReport={isSmallScreen ? () => void handleReportGeneratedImage(currentRecord) : undefined}
+                        onReport={() => void handleReportGeneratedImage(currentRecord)}
                       />
                     </Flex>
                   )}
@@ -577,7 +588,7 @@ function ImageCreatorPage() {
 
                   {currentRecord.status === 'generating' && currentRecord.taskId && !isCurrentlyGenerating && (
                     <Flex justify="center" w="100%">
-                      <Button variant="light" onClick={() => void resumeGeneration(currentRecord.id)}>
+                      <Button variant="light" onClick={() => void resumeImageGenerationWithFollowUp(currentRecord.id)}>
                         {t('Resume Generation')}
                       </Button>
                     </Flex>
@@ -618,7 +629,7 @@ function ImageCreatorPage() {
               />
 
               <Box
-                className="rounded-md bg-[var(--chatbox-background-secondary)] px-3 py-2"
+                className="rounded-lg bg-[var(--chatbox-background-secondary)] px-3 py-2"
                 style={{ border: '1px solid var(--chatbox-border-primary)' }}
               >
                 <Stack gap="xs">
@@ -658,7 +669,7 @@ function ImageCreatorPage() {
                       size={32}
                       variant="filled"
                       color={isCurrentlyGenerating ? 'dark' : 'chatbox-brand'}
-                      radius="xl"
+                      radius="lg"
                       onClick={isCurrentlyGenerating ? cancelGeneration : handleSubmit}
                       disabled={(!prompt.trim() || !selectedModel) && !isCurrentlyGenerating}
                       className={`shrink-0 mb-1 ${(!prompt.trim() || !selectedModel) && !isCurrentlyGenerating ? 'disabled:!opacity-100 !text-white' : ''}`}

@@ -1,4 +1,5 @@
-import { PROVIDER_ID_MAP, REVERSE_PROVIDER_MAP } from './provider-mapping'
+import { applyRegistryOverlays } from './legacy-overrides'
+import { REVERSE_PROVIDER_MAP } from './provider-mapping'
 import type {
   ModelMetadata,
   ModelRegistryData,
@@ -6,6 +7,25 @@ import type {
   ModelsDevResponse,
   ProviderModelRegistry,
 } from './types'
+
+const MEDIA_GENERATION_FAMILIES = new Set(['veo', 'lyria'])
+
+/**
+ * Image / video / audio generators are not conversational models. Keep them out of
+ * the chat registry so getDiscoveredModels() cannot surface them as new chat options.
+ */
+export function isNonChatMediaModel(entry: ModelsDevModelEntry): boolean {
+  if (MEDIA_GENERATION_FAMILIES.has(entry.family ?? '')) {
+    return true
+  }
+  const outputs = entry.modalities?.output ?? []
+  return outputs.length > 0 && !outputs.includes('text')
+}
+
+// models.dev currently marks GPT-5 chat-tuned variants as reasoning models, but their
+// chat-completions endpoints reject reasoning_effort. Keep the source correction here so
+// generated snapshots and live enrichment apply the same override.
+const GPT_NON_REASONING_CHAT_MODEL = /(?:^|\/)gpt-5[\w.-]*[.-]chat(?:[.-]|$)/i
 
 /**
  * Transform a single models.dev model entry into our internal ModelMetadata format.
@@ -16,7 +36,7 @@ export function transformModelEntry(entry: ModelsDevModelEntry): ModelMetadata {
   if (entry.tool_call) {
     capabilities.push('tool_use')
   }
-  if (entry.reasoning) {
+  if (entry.reasoning && !GPT_NON_REASONING_CHAT_MODEL.test(entry.id)) {
     capabilities.push('reasoning')
   }
   if (entry.modalities?.input?.some((m) => ['image', 'video'].includes(m))) {
@@ -54,7 +74,7 @@ export function transformProviderModels(models: Record<string, ModelsDevModelEnt
   const registry: ProviderModelRegistry = {}
 
   for (const [modelId, entry] of Object.entries(models)) {
-    if (!entry || !modelId) continue
+    if (!entry || !modelId || isNonChatMediaModel(entry)) continue
     registry[modelId] = transformModelEntry(entry)
   }
 
@@ -83,7 +103,7 @@ export function transformFullResponse(response: ModelsDevResponse): ModelRegistr
     }
   }
 
-  return registry
+  return applyRegistryOverlays(registry)
 }
 
 /**

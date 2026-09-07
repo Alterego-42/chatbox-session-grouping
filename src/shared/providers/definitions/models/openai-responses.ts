@@ -7,6 +7,7 @@ import { createFetchWithProxy } from '../../../models/utils/fetch-proxy'
 import type { ProviderModelInfo } from '../../../types'
 import type { ModelDependencies } from '../../../types/adapters'
 import { normalizeOpenAIResponsesHostAndPath } from '../../../utils/llm_utils'
+import { normalizeOpenAIReasoningOptions } from '../../../utils/reasoning-control'
 
 interface Options {
   apiKey: string
@@ -18,12 +19,13 @@ interface Options {
   maxOutputTokens?: number
   stream?: boolean
   useProxy?: boolean
+  extraHeaders?: Record<string, string>
   customFetch?: typeof globalThis.fetch
   listModelsFallback?: ProviderModelInfo[]
   /** Skip remote model fetching and use listModelsFallback directly (e.g. OAuth tokens that can't access /models) */
   skipRemoteModelList?: boolean
-  /** Force stateless Responses requests so the SDK does not emit item references or persisted response links. */
-  forceStatelessResponses?: boolean
+  /** Skip host normalization (e.g. for Copilot API which doesn't use /v1 prefix) */
+  skipHostNormalization?: boolean
 }
 
 type FetchFunction = typeof globalThis.fetch
@@ -36,27 +38,35 @@ export default class OpenAIResponses extends AbstractAISDKModel {
     dependencies: ModelDependencies
   ) {
     super(options, dependencies)
-    const { apiHost, apiPath } = normalizeOpenAIResponsesHostAndPath(options)
-    this.options = { ...options, apiHost, apiPath }
+    if (options.skipHostNormalization) {
+      this.options = { ...options, apiPath: options.apiPath || '/responses' }
+    } else {
+      const { apiHost, apiPath } = normalizeOpenAIResponsesHostAndPath(options)
+      this.options = { ...options, apiHost, apiPath }
+    }
   }
 
   protected getCallSettings(options: CallChatCompletionOptions) {
-    const openaiProviderOptions = options.providerOptions?.openai
+    const openaiProviderOptions = normalizeOpenAIReasoningOptions(
+      this.options.model.modelId,
+      options.providerOptions?.openai
+    )
 
     return {
       temperature: this.options.temperature,
       topP: this.options.topP,
       maxOutputTokens: this.options.maxOutputTokens,
       stream: this.options.stream,
-      providerOptions:
-        openaiProviderOptions || this.options.forceStatelessResponses
-          ? {
-              openai: {
-                ...openaiProviderOptions,
-                ...(this.options.forceStatelessResponses ? { store: false } : {}),
-              },
-            }
-          : undefined,
+      // Chatbox always sends the full context itself and never relies on the Responses API's
+      // server-side state (previous_response_id / item_reference), which additionally cannot be
+      // resolved across relay/gateway providers. Force store=false so the SDK inlines the full
+      // history and avoids tool-call / item id mismatches (see issue #3728).
+      providerOptions: {
+        openai: {
+          ...openaiProviderOptions,
+          store: false,
+        },
+      },
     }
   }
 
@@ -65,20 +75,25 @@ export default class OpenAIResponses extends AbstractAISDKModel {
   }
 
   protected getProvider(_options: CallChatCompletionOptions, fetchFunction?: FetchFunction) {
+    let headers: Record<string, string> | undefined
+    if (this.options.extraHeaders && Object.keys(this.options.extraHeaders).length > 0) {
+      headers = this.options.extraHeaders
+    } else if (this.options.apiHost.includes('openrouter.ai')) {
+      headers = {
+        'HTTP-Referer': 'https://chatboxai.app',
+        'X-Title': 'Chatbox AI',
+      }
+    } else if (this.options.apiHost.includes('aihubmix.com')) {
+      headers = {
+        'APP-Code': 'VAFU9221',
+      }
+    }
+
     return createOpenAI({
       apiKey: this.options.apiKey,
       baseURL: this.options.apiHost,
       fetch: fetchFunction || this.options.customFetch,
-      headers: this.options.apiHost.includes('openrouter.ai')
-        ? {
-            'HTTP-Referer': 'https://chatboxai.app',
-            'X-Title': 'Chatbox AI',
-          }
-        : this.options.apiHost.includes('aihubmix.com')
-          ? {
-              'APP-Code': 'VAFU9221',
-            }
-          : undefined,
+      headers,
     })
   }
 
@@ -104,6 +119,7 @@ export default class OpenAIResponses extends AbstractAISDKModel {
         apiHost: this.options.apiHost,
         apiKey: this.options.apiKey,
         useProxy: this.options.useProxy,
+        extraHeaders: this.options.extraHeaders,
         customFetch: this.options.customFetch,
       },
       this.dependencies

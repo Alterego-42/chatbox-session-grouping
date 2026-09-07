@@ -5,7 +5,7 @@ import { useRouterState } from '@tanstack/react-router'
 import clsx from 'clsx'
 import { useTranslation } from 'react-i18next'
 import { useIsSmallScreen } from '@/hooks/useScreenChange'
-import { switchCurrentSession } from '@/stores/sessionActions'
+import { switchCurrentSession } from '@/stores/session'
 import { useUIStore } from '@/stores/uiStore'
 
 // Persistent pin slot for the AI Manager system session.

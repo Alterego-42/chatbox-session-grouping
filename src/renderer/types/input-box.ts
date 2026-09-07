@@ -9,9 +9,9 @@ export type ProcessingStatus = 'processing' | 'completed' | 'error' | undefined
 
 export type AttachmentPreparationResult = {
   file: File
-  inputFileKey?: string
   content: string
   storageKey: string
+  rawStorageKey?: string
   localPath?: string
   ragMode?: 'inline' | 'session-retrieval'
   parserType?: string
@@ -31,6 +31,7 @@ export type SessionAttachmentIndexingState = {
   sessionAttachmentChunkCount?: number
   sessionAttachmentTotalChunks?: number
   sessionAttachmentEmbeddedChunks?: number
+  sessionAttachmentResumable?: boolean
   sessionAttachmentIndexingStage?: SessionAttachmentIndexingStage
 }
 

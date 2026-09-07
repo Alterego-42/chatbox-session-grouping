@@ -5,51 +5,17 @@ import {
   KNOWLEDGE_BASE_MAX_PARSED_CONTENT_SIZE,
   KNOWLEDGE_BASE_PARSED_CONTENT_TOO_LARGE_ERROR,
 } from '../../shared/knowledge-base'
-import { ChatboxAIAPIError } from '../../shared/models/errors'
 import { rerank } from '../../shared/models/rerank'
 import type { DocumentParserConfig } from '../../shared/types/settings'
 import { sentry } from '../adapters/sentry'
 import { getLogger } from '../util'
 import { checkProcessingTimeouts, getDatabase, getVectorStore } from './db'
+import { isExpectedKnowledgeBaseRerankError } from './error-reporting'
+import { normalizeKnowledgeBaseFileError } from './file-error'
 import { getEmbeddingProvider, getRerankProvider } from './model-providers'
 import { getEffectiveParserConfig, type ParserFileMeta, parseFileWithRouter } from './parsers'
 
 const log = getLogger('knowledge-base:file-loaders')
-
-/**
- * Parse error message to extract user-friendly message
- * Handles JSON error responses from Chatbox AI API
- * Uses i18nKey from ChatboxAIAPIError.codeNameMap for known error codes
- */
-function parseErrorMessage(errorMessage: string): string {
-  // Try to extract error code from JSON error response
-  // Format: "Status Code 500, {"error":{"code":"system_error","detail":"Server error...","status":500,"title":"Server Error"}}"
-  try {
-    // Find JSON part in the message
-    const jsonMatch = errorMessage.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const jsonStr = jsonMatch[0]
-      const parsed = JSON.parse(jsonStr)
-      const errorCode = parsed.error?.code
-
-      // Try to get i18nKey from ChatboxAIAPIError.codeNameMap
-      if (errorCode && ChatboxAIAPIError.codeNameMap[errorCode]) {
-        return ChatboxAIAPIError.codeNameMap[errorCode].i18nKey
-      }
-
-      // Fallback to detail or title
-      if (parsed.error?.detail) {
-        return parsed.error.detail
-      }
-      if (parsed.error?.title) {
-        return parsed.error.title
-      }
-    }
-  } catch {
-    // JSON parsing failed, return original message
-  }
-  return errorMessage
-}
 
 // Parse file to MDocument using the parser router
 async function parseFileToDocumentWithRouter(
@@ -351,7 +317,7 @@ async function processPendingFiles() {
         log.error(`[FILE] File processing failed: ${file.filename} (id=${file.id})`, err)
         // Mark as failed - parse error message to extract user-friendly message
         const rawErrorMessage = err instanceof Error ? err.message : String(err)
-        const errorMessage = parseErrorMessage(rawErrorMessage)
+        const errorMessage = normalizeKnowledgeBaseFileError(rawErrorMessage)
         await db.execute({
           sql: 'UPDATE kb_file SET status = ?, error = ?, processing_started_at = NULL WHERE id = ?',
           args: ['failed', errorMessage, file.id],
@@ -437,14 +403,21 @@ export async function searchKnowledgeBase(kbId: number, query: string) {
         ...r.metadata,
       }))
     } catch (e) {
-      log.error(`[FILE] Failed to rerank: kbId=${kbId}, query=${query}`, e)
-      sentry.withScope((scope) => {
-        scope.setTag('component', 'knowledge-base-file')
-        scope.setTag('operation', 'rerank')
-        scope.setExtra('kbId', kbId)
-        scope.setExtra('query', query)
-        sentry.captureException(e)
-      })
+      const expectedRerankError = isExpectedKnowledgeBaseRerankError(e)
+      const logMessage = `[FILE] Failed to rerank: kbId=${kbId}, queryLength=${query.length}`
+
+      if (expectedRerankError) {
+        log.warn(logMessage, e)
+      } else {
+        log.error(logMessage, e)
+        sentry.withScope((scope) => {
+          scope.setTag('component', 'knowledge-base-file')
+          scope.setTag('operation', 'rerank')
+          scope.setExtra('kbId', kbId)
+          scope.setExtra('queryLength', query.length)
+          sentry.captureException(e)
+        })
+      }
       return results.map((r) => ({
         id: r.id,
         score: r.score,
@@ -452,13 +425,13 @@ export async function searchKnowledgeBase(kbId: number, query: string) {
       }))
     }
   } catch (e) {
-    log.error(`[FILE] Failed to search: kbId=${kbId}, query=${query}`, e)
+    log.error(`[FILE] Failed to search: kbId=${kbId}, queryLength=${query.length}`, e)
 
     sentry.withScope((scope) => {
       scope.setTag('component', 'knowledge-base-file')
       scope.setTag('operation', 'search_knowledge_base')
       scope.setExtra('kbId', kbId)
-      scope.setExtra('query', query)
+      scope.setExtra('queryLength', query.length)
       sentry.captureException(e)
     })
 
