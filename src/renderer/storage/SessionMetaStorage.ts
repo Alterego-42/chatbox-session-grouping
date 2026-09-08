@@ -24,6 +24,23 @@ function fromStored(record: SessionMetaRecord & { groupKey?: string }): SessionM
   return rest
 }
 
+/** Keyset cursor for group pages: which run (pinned first, then the rest) and the last sortOrder seen. */
+export interface GroupPageCursor {
+  pinned: boolean
+  sortOrder: number
+}
+
+export interface GroupSessionMetaPage {
+  items: SessionMetaRecord[]
+  nextCursor: GroupPageCursor | null
+  total: number
+}
+
+type RecordPredicate = (record: SessionMetaRecord) => boolean
+
+const isPinned = (record: SessionMetaRecord) => record.starred === true
+const isUnpinned = (record: SessionMetaRecord) => record.starred !== true
+
 export interface SessionMetaStorage extends SessionMetaRepositoryPort {
   initialize(): Promise<void>
   create(record: SessionMetaRecord): Promise<void>
@@ -38,12 +55,13 @@ export interface SessionMetaStorage extends SessionMetaRepositoryPort {
   getArchivedPage(cursor: number, limit?: number): Promise<SessionMetaPage>
   getPage(cursor: number, limit?: number): Promise<SessionMetaPage>
   /**
-   * Keyset-paginated read of one group's visible (non-hidden) sessions (groupId null = ungrouped),
-   * newest first by sortOrder. `cursor` is the previous page's last sortOrder (null = first page).
+   * Keyset-paginated read of one group's visible (non-hidden) sessions (groupId null = ungrouped).
+   * Pinned (starred) sessions come first, then the rest; each run is newest-first by sortOrder, and
+   * `cursor` (null = first page) records the run + last sortOrder so paging crosses the boundary.
    * Uses the [groupKey, sortOrder] index when present; otherwise streams the sortOrder index with a
    * filter — never getAll() + slice.
    */
-  getPageByGroup(groupId: string | null, cursor: number | null, limit?: number): Promise<SessionMetaPage>
+  getPageByGroup(groupId: string | null, cursor: GroupPageCursor | null, limit?: number): Promise<GroupSessionMetaPage>
   getTotal(): Promise<number>
   /** Visible (non-hidden) session count for one group (null = ungrouped). */
   getTotalByGroup(groupId: string | null): Promise<number>
@@ -300,26 +318,66 @@ export class IndexedDBSessionMetaStorage implements SessionMetaStorage {
 
   async getPageByGroup(
     groupId: string | null,
-    cursor: number | null = null,
+    cursor: GroupPageCursor | null = null,
     limit: number = DEFAULT_PAGE_SIZE
-  ): Promise<SessionMetaPage> {
+  ): Promise<GroupSessionMetaPage> {
     await this.initialize()
-    const items = this.hasIndex(GROUP_INDEX)
-      ? await this.getGroupPageByIndex(groupId, cursor, limit)
-      : await this.getGroupPageByScan(groupId, cursor, limit)
-    const nextCursor = items.length >= limit ? (items[items.length - 1]?.sortOrder ?? null) : null
+    const items: SessionMetaRecord[] = []
+    let nextCursor: GroupPageCursor | null = null
+    // Run 1 — pinned sessions float to the top of every group view, newest first. Each run reads one
+    // record past `limit` so a next page is only advertised when it really exists.
+    if (cursor === null || cursor.pinned) {
+      const pinned = await this.collectGroupRecords(groupId, cursor?.sortOrder ?? null, limit + 1, isPinned)
+      if (pinned.length > limit) {
+        items.push(...pinned.slice(0, limit))
+        nextCursor = { pinned: true, sortOrder: items[items.length - 1].sortOrder }
+      } else {
+        items.push(...pinned)
+      }
+    }
+    // Run 2 — everything else, newest first; entered on the same page once the pinned run is exhausted.
+    if (nextCursor === null) {
+      const remaining = limit - items.length
+      const before = cursor !== null && !cursor.pinned ? cursor.sortOrder : null
+      const rest = await this.collectGroupRecords(groupId, before, remaining + 1, isUnpinned)
+      if (rest.length > remaining) {
+        items.push(...rest.slice(0, remaining))
+        // A page filled entirely by the pinned run resumes with `pinned: true`: the next read finds
+        // no pinned records below that sortOrder and rolls over to the top of the unpinned run.
+        nextCursor = { pinned: remaining === 0, sortOrder: items[items.length - 1].sortOrder }
+      } else {
+        items.push(...rest)
+      }
+    }
     const total = await this.getTotalByGroup(groupId)
     return { items, nextCursor, total }
   }
 
-  private getGroupPageByIndex(groupId: string | null, cursor: number | null, limit: number) {
+  /** Visible records of one group with sortOrder strictly below `before` (null = from the top), newest first. */
+  private collectGroupRecords(
+    groupId: string | null,
+    before: number | null,
+    limit: number,
+    predicate: RecordPredicate
+  ): Promise<SessionMetaRecord[]> {
+    return this.hasIndex(GROUP_INDEX)
+      ? this.getGroupPageByIndex(groupId, before, limit, predicate)
+      : this.getGroupPageByScan(groupId, before, limit, predicate)
+  }
+
+  private getGroupPageByIndex(
+    groupId: string | null,
+    before: number | null,
+    limit: number,
+    predicate: RecordPredicate
+  ) {
     const groupKey = groupId ?? UNGROUPED_KEY
     // `[groupKey, []]` sorts after every `[groupKey, <number>]` (arrays > numbers in IDB key order),
     // so it is the open upper bound for "all records in this group".
     const range =
-      cursor === null
+      before === null
         ? IDBKeyRange.bound([groupKey], [groupKey, []])
-        : IDBKeyRange.bound([groupKey], [groupKey, cursor], false, true)
+        : IDBKeyRange.bound([groupKey], [groupKey, before], false, true)
     return new Promise<SessionMetaRecord[]>((resolve, reject) => {
       const out: SessionMetaRecord[] = []
       const index = this.getStore('readonly').index(GROUP_INDEX)
@@ -331,7 +389,7 @@ export class IndexedDBSessionMetaStorage implements SessionMetaStorage {
           return
         }
         const rec = c.value as SessionMetaRecord & { groupKey?: string }
-        if (!rec.hidden) out.push(fromStored(rec))
+        if (!rec.hidden && predicate(rec)) out.push(fromStored(rec))
         c.continue()
       }
       req.onerror = () => reject(req.error)
@@ -339,12 +397,12 @@ export class IndexedDBSessionMetaStorage implements SessionMetaStorage {
   }
 
   /** Index-less fallback: stream the sortOrder index newest-first and keep matching records. */
-  private getGroupPageByScan(groupId: string | null, cursor: number | null, limit: number) {
+  private getGroupPageByScan(groupId: string | null, before: number | null, limit: number, predicate: RecordPredicate) {
     return new Promise<SessionMetaRecord[]>((resolve, reject) => {
       const out: SessionMetaRecord[] = []
       const store = this.getStore('readonly')
       const source = store.indexNames.contains('sortOrder') ? store.index('sortOrder') : store
-      const range = cursor === null ? null : IDBKeyRange.upperBound(cursor, true)
+      const range = before === null ? null : IDBKeyRange.upperBound(before, true)
       const req = source.openCursor(range, 'prev')
       req.onsuccess = () => {
         const c = req.result
@@ -353,7 +411,7 @@ export class IndexedDBSessionMetaStorage implements SessionMetaStorage {
           return
         }
         const rec = c.value as SessionMetaRecord & { groupKey?: string }
-        if (!rec.hidden && (rec.groupId ?? null) === groupId) out.push(fromStored(rec))
+        if (!rec.hidden && (rec.groupId ?? null) === groupId && predicate(rec)) out.push(fromStored(rec))
         c.continue()
       }
       req.onerror = () => reject(req.error)

@@ -5,7 +5,12 @@ import {
   type SQLiteDBConnection,
 } from '@capacitor-community/sqlite'
 import type { SessionMetaPage, SessionMetaRecord } from '@shared/types'
-import { type SessionMetaStorage, sortSessionRecords } from './SessionMetaStorage'
+import {
+  type GroupPageCursor,
+  type GroupSessionMetaPage,
+  type SessionMetaStorage,
+  sortSessionRecords,
+} from './SessionMetaStorage'
 
 const DB_NAME = 'chatbox-session-meta'
 
@@ -292,23 +297,51 @@ export class SQLiteSessionMetaStorage implements SessionMetaStorage {
 
   async getPageByGroup(
     groupId: string | null,
-    cursor: number | null = null,
+    cursor: GroupPageCursor | null = null,
     limit: number = 50
-  ): Promise<SessionMetaPage> {
+  ): Promise<GroupSessionMetaPage> {
     await this.initialize()
     const groupClause = groupId === null ? 'group_id IS NULL' : 'group_id = ?'
-    const params: unknown[] = groupId === null ? [] : [groupId]
-    let sql = `SELECT * FROM session_meta WHERE hidden = 0 AND ${groupClause}`
-    if (cursor !== null) {
-      sql += ' AND sort_order < ?'
-      params.push(cursor)
+    const groupParams: unknown[] = groupId === null ? [] : [groupId]
+    const fetchRun = async (pinned: boolean, before: number | null, count: number): Promise<SessionMetaRecord[]> => {
+      let sql = `SELECT * FROM session_meta WHERE hidden = 0 AND ${groupClause} AND starred = ?`
+      const params: unknown[] = [...groupParams, pinned ? 1 : 0]
+      if (before !== null) {
+        sql += ' AND sort_order < ?'
+        params.push(before)
+      }
+      sql += ' ORDER BY sort_order DESC LIMIT ?'
+      params.push(count)
+      const result = await this.database.query(sql, params)
+      return (result.values || []).map((row) => this.rowToRecord(row))
     }
-    sql += ' ORDER BY sort_order DESC LIMIT ?'
-    params.push(limit)
-    const result = await this.database.query(sql, params)
-    const items = (result.values || []).map((row) => this.rowToRecord(row))
+    const items: SessionMetaRecord[] = []
+    let nextCursor: GroupPageCursor | null = null
+    // Run 1 — pinned sessions first, newest first; reads one past `limit` to detect a next page.
+    if (cursor === null || cursor.pinned) {
+      const pinned = await fetchRun(true, cursor?.sortOrder ?? null, limit + 1)
+      if (pinned.length > limit) {
+        items.push(...pinned.slice(0, limit))
+        nextCursor = { pinned: true, sortOrder: items[items.length - 1].sortOrder }
+      } else {
+        items.push(...pinned)
+      }
+    }
+    // Run 2 — the rest, newest first.
+    if (nextCursor === null) {
+      const remaining = limit - items.length
+      const before = cursor !== null && !cursor.pinned ? cursor.sortOrder : null
+      const rest = await fetchRun(false, before, remaining + 1)
+      if (rest.length > remaining) {
+        items.push(...rest.slice(0, remaining))
+        // Filled by the pinned run alone: resume with `pinned: true` so the next page rolls over
+        // to the top of the unpinned run (see IndexedDBSessionMetaStorage.getPageByGroup).
+        nextCursor = { pinned: remaining === 0, sortOrder: items[items.length - 1].sortOrder }
+      } else {
+        items.push(...rest)
+      }
+    }
     const total = await this.getTotalByGroup(groupId)
-    const nextCursor = items.length === limit ? (items[items.length - 1]?.sortOrder ?? null) : null
     return { items, nextCursor, total }
   }
 

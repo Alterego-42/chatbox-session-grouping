@@ -46,10 +46,63 @@ describe('IndexedDBSessionMetaStorage — group-filtered pagination', () => {
     const p1 = await store.getPageByGroup('group:A', null, 2)
     expect(p1.items.map((r) => r.id)).toEqual(['a3', 'a2'])
     expect(p1.total).toBe(3)
-    expect(p1.nextCursor).toBe(90)
+    expect(p1.nextCursor).toEqual({ pinned: false, sortOrder: 90 })
 
     const p2 = await store.getPageByGroup('group:A', p1.nextCursor, 2)
     expect(p2.items.map((r) => r.id)).toEqual(['a1'])
+    expect(p2.nextCursor).toBeNull()
+  })
+
+  it('floats pinned sessions to the top of the group and pages across the pin boundary', async () => {
+    await store.createMany([
+      rec('n3', 300, 'group:A'),
+      rec('p1', 250, 'group:A', { starred: true }),
+      rec('n2', 200, 'group:A'),
+      rec('p2', 150, 'group:A', { starred: true }),
+      rec('n1', 100, 'group:A'),
+      rec('other', 999, 'group:B', { starred: true }),
+    ])
+
+    const p1 = await store.getPageByGroup('group:A', null, 3)
+    expect(p1.items.map((r) => r.id)).toEqual(['p1', 'p2', 'n3'])
+    expect(p1.total).toBe(5)
+    expect(p1.nextCursor).toEqual({ pinned: false, sortOrder: 300 })
+
+    const p2 = await store.getPageByGroup('group:A', p1.nextCursor, 3)
+    expect(p2.items.map((r) => r.id)).toEqual(['n2', 'n1'])
+    expect(p2.nextCursor).toBeNull()
+  })
+
+  it('keeps paging inside the pinned run while it still has more than a page', async () => {
+    await store.createMany([
+      rec('p3', 300, 'group:A', { starred: true }),
+      rec('p2', 200, 'group:A', { starred: true }),
+      rec('p1', 100, 'group:A', { starred: true }),
+      rec('n1', 50, 'group:A'),
+    ])
+
+    const p1 = await store.getPageByGroup('group:A', null, 2)
+    expect(p1.items.map((r) => r.id)).toEqual(['p3', 'p2'])
+    expect(p1.nextCursor).toEqual({ pinned: true, sortOrder: 200 })
+
+    const p2 = await store.getPageByGroup('group:A', p1.nextCursor, 2)
+    expect(p2.items.map((r) => r.id)).toEqual(['p1', 'n1'])
+    expect(p2.nextCursor).toBeNull()
+  })
+
+  it('rolls over to the unpinned run when a page is filled exactly by pinned sessions', async () => {
+    await store.createMany([
+      rec('p2', 200, 'group:A', { starred: true }),
+      rec('p1', 100, 'group:A', { starred: true }),
+      rec('n1', 50, 'group:A'),
+    ])
+
+    const p1 = await store.getPageByGroup('group:A', null, 2)
+    expect(p1.items.map((r) => r.id)).toEqual(['p2', 'p1'])
+    expect(p1.nextCursor).toEqual({ pinned: true, sortOrder: 100 })
+
+    const p2 = await store.getPageByGroup('group:A', p1.nextCursor, 2)
+    expect(p2.items.map((r) => r.id)).toEqual(['n1'])
     expect(p2.nextCursor).toBeNull()
   })
 

@@ -29,7 +29,7 @@ import {
   IconInbox,
   IconPalette,
   IconPencil,
-  IconStarFilled,
+  IconPinnedFilled,
   IconTrash,
 } from '@tabler/icons-react'
 import { useAtom } from 'jotai'
@@ -167,10 +167,10 @@ function StarredRow({ active, onEnter }: { active: boolean; onEnter: () => void 
       depth={1}
       active={active}
       onClick={onEnter}
-      icon={<IconStarFilled size={16} className="shrink-0" style={{ color: 'var(--mantine-color-yellow-6)' }} />}
+      icon={<IconPinnedFilled size={16} className="shrink-0 text-chatbox-brand" />}
       label={
         <Text span size="sm" fw={600} lineClamp={1} c="chatbox-primary">
-          {t('Starred')}
+          {t('Pinned')}
         </Text>
       }
       count={total}

@@ -1,9 +1,8 @@
-import type { SessionMetaPage } from '@shared/types'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { rendererApplication } from '@/app/renderer-application'
 import platform from '@/platform'
-import type { SessionMetaStorage } from '@/storage/SessionMetaStorage'
+import type { GroupPageCursor, GroupSessionMetaPage, SessionMetaStorage } from '@/storage/SessionMetaStorage'
 
 // MARK: group-scoped session list (file-explorer view)
 
@@ -26,7 +25,10 @@ export async function getGroupMetaStorage(): Promise<SessionMetaStorage> {
 export const groupSessionsQueryKey = (groupId: string | null) =>
   [...GROUP_LIST_KEY, groupId ?? UNGROUPED_QUERY_KEY] as const
 
-async function listSessionsByGroupPage(groupId: string | null, cursor: number | null): Promise<SessionMetaPage> {
+async function listSessionsByGroupPage(
+  groupId: string | null,
+  cursor: GroupPageCursor | null
+): Promise<GroupSessionMetaPage> {
   const metaStorage = await getGroupMetaStorage()
   return await metaStorage.getPageByGroup(groupId, cursor)
 }
@@ -34,9 +36,9 @@ async function listSessionsByGroupPage(groupId: string | null, cursor: number | 
 function groupSessionsQueryOptions(groupId: string | null) {
   return {
     queryKey: groupSessionsQueryKey(groupId),
-    queryFn: ({ pageParam }: { pageParam: number | null }) => listSessionsByGroupPage(groupId, pageParam),
-    getNextPageParam: (lastPage: SessionMetaPage) => lastPage.nextCursor,
-    initialPageParam: null as number | null,
+    queryFn: ({ pageParam }: { pageParam: GroupPageCursor | null }) => listSessionsByGroupPage(groupId, pageParam),
+    getNextPageParam: (lastPage: GroupSessionMetaPage) => lastPage.nextCursor,
+    initialPageParam: null as GroupPageCursor | null,
     staleTime: Infinity,
   }
 }
@@ -83,7 +85,7 @@ export function useGroupSessionCount(groupId: string | null) {
   return data ?? 0
 }
 
-/** All starred sessions across groups, newest first — backs the virtual "Starred" pseudo-group. */
+/** All pinned (starred) sessions across groups, newest first — backs the virtual "Pinned" pseudo-group. */
 export function useStarredSessions() {
   ensureEventSubscription()
   const { data } = useQuery({

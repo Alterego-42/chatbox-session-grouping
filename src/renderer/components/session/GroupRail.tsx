@@ -1,5 +1,5 @@
 import { ActionIcon, Box, Paper, Stack, Tooltip } from '@mantine/core'
-import { IconFolders, IconInbox, IconStarFilled } from '@tabler/icons-react'
+import { IconFolders, IconInbox, IconPinnedFilled } from '@tabler/icons-react'
 import { useAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -59,7 +59,7 @@ export default function GroupRail() {
         </Tooltip>
 
         {currentGroupId === STARRED_GROUP_ID ? (
-          <IconStarFilled size={14} style={{ color: 'var(--mantine-color-yellow-6)' }} />
+          <IconPinnedFilled size={14} className="text-chatbox-brand" />
         ) : currentGroupId === null ? (
           <IconInbox size={14} className="text-chatbox-tertiary" />
         ) : (

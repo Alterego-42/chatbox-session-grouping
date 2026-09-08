@@ -270,12 +270,18 @@ export async function reorderSessions(oldIndex: number, newIndex: number) {
  */
 export async function reorderSessionInGroup(groupSessions: SessionMetaRecord[], oldIndex: number, newIndex: number) {
   const moved = groupSessions[oldIndex]
-  if (!moved || oldIndex === newIndex) return
+  const target = groupSessions[newIndex]
+  if (!moved || !target || oldIndex === newIndex) return
+  // Pinned sessions float above the rest in every group view, so a drop only means something
+  // inside the same pin run — mirrors the flat list's areSessionsInSamePinGroup guard.
+  if (!areSessionsInSamePinGroup(moved, target)) return
   const reordered = [...groupSessions]
   reordered.splice(oldIndex, 1)
   reordered.splice(newIndex, 0, moved)
-  const before = reordered[newIndex - 1] // higher sortOrder (list is sortOrder desc)
-  const after = reordered[newIndex + 1] // lower sortOrder
+  const run = reordered.filter((s) => areSessionsInSamePinGroup(s, moved))
+  const at = run.findIndex((s) => s.id === moved.id)
+  const before = run[at - 1] // higher sortOrder (runs are sortOrder desc)
+  const after = run[at + 1] // lower sortOrder
   let newSortOrder: number
   if (!before && !after) return
   if (!before) newSortOrder = after.sortOrder + 1000

@@ -1414,5 +1414,6 @@
   "Setup required": "需要配置",
   "Chatbox AI Search needs sign-in. Web Search will be skipped while this setting is on.": "Chatbox AI 搜索需要登录。此设置保持开启时，联网搜索会被跳过。",
   "The selected Web Search provider needs to be configured before it can run.": "所选联网搜索源需要完成配置后才能运行。",
-  "Open Web Search settings": "打开联网搜索设置"
+  "Open Web Search settings": "打开联网搜索设置",
+  "No pinned chats yet": "还没有置顶的会话"
 }

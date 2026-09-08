@@ -1,3 +1,4 @@
+import { areSessionsInSamePinGroup } from '@chatbox/core/utils/session-sort'
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import {
   closestCenter,
@@ -24,9 +25,9 @@ import {
   IconChevronRight,
   IconInbox,
   IconLoader2,
+  IconPinnedFilled,
   IconPlus,
   IconSearch,
-  IconStarFilled,
 } from '@tabler/icons-react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import { useAtom } from 'jotai'
@@ -105,6 +106,8 @@ export default function GroupedSessionList({ sessionListViewportRef }: Props) {
     const oldIndex = sessionMetaList.findIndex((s) => s.id === activeId)
     const newIndex = sessionMetaList.findIndex((s) => s.id === overId)
     if (oldIndex < 0 || newIndex < 0) return
+    // Pinned sessions float to the top of the group, so drops across the pin boundary are ignored.
+    if (!areSessionsInSamePinGroup(sessionMetaList[oldIndex], sessionMetaList[newIndex])) return
     await reorderSessionInGroup(sessionMetaList, oldIndex, newIndex)
   }
 
@@ -143,7 +146,7 @@ export default function GroupedSessionList({ sessionListViewportRef }: Props) {
       <Flex flex={1} align="center" justify="center" px="md">
         <Box>
           <Text size="sm" c="chatbox-tertiary" ta="center">
-            {isStarred ? t('No starred chats yet') : t('No chats here yet')}
+            {isStarred ? t('No pinned chats yet') : t('No chats here yet')}
           </Text>
         </Box>
       </Flex>
@@ -155,9 +158,9 @@ export default function GroupedSessionList({ sessionListViewportRef }: Props) {
         <Flex align="center" gap={2} flex={1} style={{ minWidth: 0, overflow: 'hidden' }}>
           {isStarred ? (
             <>
-              <IconStarFilled size={16} className="shrink-0" style={{ color: 'var(--mantine-color-yellow-6)' }} />
+              <IconPinnedFilled size={16} className="shrink-0 text-chatbox-brand" />
               <Text span size="sm" fw={600} c="chatbox-primary" lineClamp={1}>
-                {t('Starred')}
+                {t('Pinned')}
               </Text>
             </>
           ) : (
