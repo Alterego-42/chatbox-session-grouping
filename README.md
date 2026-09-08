@@ -2,7 +2,7 @@
 
 A fork of [Chatbox Community Edition](https://github.com/ChatBoxAI/ChatBox) that replaces the flat, ever-growing chat list with a **file-explorer-style sidebar**: nestable groups, a per-group paginated view, and an AI assistant that can reorganize the whole sidebar through tool calls.
 
-> Base: upstream **v1.21.1**. Personal fork, maintained for personal builds — not affiliated with the upstream project. Same GPLv3 license.
+> Base: upstream **v1.23.1**. Personal fork, maintained for personal builds — not affiliated with the upstream project. Same GPLv3 license.
 
 ---
 
