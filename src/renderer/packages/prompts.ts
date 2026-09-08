@@ -14,7 +14,9 @@ export function summarizeForUser(msgs: Message[], languageName: string, systemPr
     .join('\n\n---------\n\n')
 
   const template =
-    systemPromptTemplate && systemPromptTemplate.trim().length > 0 ? systemPromptTemplate : DEFAULT_SUMMARY_FOR_USER_PROMPT
+    systemPromptTemplate && systemPromptTemplate.trim().length > 0
+      ? systemPromptTemplate
+      : DEFAULT_SUMMARY_FOR_USER_PROMPT
   const systemText = template.replace(/\{\{\s*languageName\s*\}\}/g, languageName)
 
   const userText = `Summarize the following conversation between User and Assistant.

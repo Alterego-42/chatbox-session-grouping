@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionMetaRecord } from '@shared/types'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SQLiteSessionMetaStorage } from '../SQLiteSessionMetaStorage'
 
 const mockDatabase = vi.hoisted(() => ({

@@ -57,10 +57,7 @@ export default function ExportSelectionTree({
     setOpenGroups((m) => ({ ...m, [id]: !m[id] }))
   }
 
-  const visibleSessions = useMemo(
-    () => sessions.filter((s) => !isSystemSession(s) && !s.hidden),
-    [sessions]
-  )
+  const visibleSessions = useMemo(() => sessions.filter((s) => !isSystemSession(s) && !s.hidden), [sessions])
 
   const buckets = useMemo<BucketView[]>(() => {
     const byGroup = new Map<string, SessionMeta[]>()

@@ -1,6 +1,6 @@
-import type { ModelInterface } from '@shared/models/types'
 import NiceModal from '@ebay/nice-modal-react'
 import { SESSION_MANAGER_ID } from '@shared/defaults'
+import type { ModelInterface } from '@shared/models/types'
 import type { SandboxSeedAttachment } from '@shared/sandbox/attachment-path'
 import type { SandboxProvider } from '@shared/sandbox-provider'
 import { supportsToolResultImages } from '@shared/tools/view-image'
