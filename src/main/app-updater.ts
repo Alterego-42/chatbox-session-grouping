@@ -7,6 +7,13 @@ import { getLogger } from './util'
 
 const log = getLogger('app-updater')
 
+/**
+ * Session-grouping fork: builds are installed by hand from source and reuse the official app
+ * identity (xyz.chatboxapp.app), so electron-updater would fetch the OFFICIAL installer and — with
+ * autoInstallOnAppQuit — silently replace this fork on quit. Updates come from rebuilding instead.
+ */
+const FORK_AUTO_UPDATE_DISABLED = true
+
 function sendToRenderer(win: BrowserWindow | null, channel: string, data?: unknown) {
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, data)
@@ -20,6 +27,18 @@ export class AppUpdater {
 
   constructor(getWindow: () => BrowserWindow | null) {
     this.getWindow = getWindow
+
+    if (FORK_AUTO_UPDATE_DISABLED) {
+      log.info('auto_updater: disabled in this fork build (manual installs only)')
+      ipcMain.removeHandler('updater:check')
+      ipcMain.handle('updater:check', async () => {
+        sendToRenderer(this.getWindow(), 'updater:not-available')
+        return { started: true }
+      })
+      ipcMain.removeHandler('install-update')
+      ipcMain.handle('install-update', () => undefined)
+      return
+    }
 
     log.transports.file.level = 'info'
     autoUpdater.logger = log
@@ -93,6 +112,7 @@ export class AppUpdater {
   }
 
   async tryUpdate() {
+    if (FORK_AUTO_UPDATE_DISABLED) return null
     if (this.isChecking) {
       log.info('auto_updater: check already in progress, skipping')
       return null
